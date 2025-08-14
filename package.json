@@ -1,0 +1,34 @@
+{
+  "name": "assessment-1",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hsathginks/CloudComputingAssessment1.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/hsathginks/CloudComputingAssessment1/issues"
+  },
+  "homepage": "https://github.com/hsathginks/CloudComputingAssessment1#readme",
+  "dependencies": {
+    "express": "^5.1.0",
+    "express-fileupload": "^1.5.2",
+    "fluent-ffmpeg": "^2.1.3",
+    "jsonwebtoken": "^9.0.2",
+    "lowdb": "^7.0.1",
+    "nanoid": "^5.1.5",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
