@@ -3,6 +3,7 @@ import fileUpload from 'express-fileupload';
 import jwt from 'jsonwebtoken';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
+import ffmpeg from "fluent-ffmpeg";
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { nanoid } from 'nanoid';
@@ -11,7 +12,17 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Ensure upload and transcoded directories exist
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+const transcodedDir = path.join(__dirname, 'transcoded');
+if (!fs.existsSync(transcodedDir)) fs.mkdirSync(transcodedDir);
+
 const app = express();
+// Serve front-end files
+app.use(express.static(path.join(__dirname, 'public')));
+
 app.use(express.json());
 app.use(fileUpload());
 
@@ -26,41 +37,48 @@ const users = [
 
 // auth middleware
 function authMiddleware(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader) return res.sendStatus(401);
-
-    const token = authHeader.split(' ')[1];
+    const token = req.headers["authorization"]?.split(" ")[1];
     if (!token) return res.sendStatus(401);
-
-    jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) return res.sendStatus(403);
-        req.user = decoded;
+        req.user = user;
         next();
     });
 }
 
 // sqlite db setup
-const dbFile = path.join(__dirname, 'video.db');
 const db = await open({
-    filename: dbFile,
+    filename: "./db/video.db",
     driver: sqlite3.Database
 });
 
-// Create table if not exists
-await db.exec(`
-  CREATE TABLE IF NOT EXISTS videos (
-    id TEXT PRIMARY KEY,
-    owner TEXT,
-    originalName TEXT,
-    inputPath TEXT,
-    outputPath TEXT,
-    status TEXT,
-    format TEXT,
-    createdAt TEXT
-  )
-`);
+await db.exec(`CREATE TABLE IF NOT EXISTS videos (
+  id TEXT PRIMARY KEY,
+  owner TEXT,
+  originalName TEXT,
+  inputPath TEXT,
+  outputPath TEXT,
+  status TEXT,
+  format TEXT,
+  createdAt TEXT
+)`);
+
+// // Create table if not exists
+// await db.exec(`
+//   CREATE TABLE IF NOT EXISTS videos (
+//     id TEXT PRIMARY KEY,
+//     owner TEXT,
+//     originalName TEXT,
+//     inputPath TEXT,
+//     outputPath TEXT,
+//     status TEXT,
+//     format TEXT,
+//     createdAt TEXT
+//   )
+// `);
 
 // api routes
+
 // Login route
 app.post('/login', (req, res) => {
     const { username, password } = req.body;
@@ -92,6 +110,32 @@ app.post('/upload', authMiddleware, async (req, res) => {
 
     res.json({ message: 'File uploaded', id });
 });
+
+// transcode video
+app.post("/transcode", authMiddleware, (req, res) => {
+    const { id, format } = req.body;
+
+    db.get(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [id, req.user.username], (err, video) => {
+        if (err || !video) return res.status(404).send("Video not found");
+
+        const inputPath = path.join("uploads", video.filename);
+        const outputName = `${path.parse(video.filename).name}.${format}`;
+        const outputPath = path.join("transcoded", outputName);
+
+        ffmpeg(inputPath)
+            .toFormat(format)
+            .save(outputPath)
+            .on("end", async () => {
+                await db.run(
+                    `UPDATE videos SET status = ?, outputPath = ?, format = ? WHERE id = ?`,
+                    ["transcoded", outputPath, format, id]
+                );
+                res.json({ message: "Transcoding complete", file: outputName });
+            })
+            .on("error", err => res.status(500).send(err.message));
+
+    });
+})
 
 // List videos for user
 app.get('/videos', authMiddleware, async (req, res) => {
