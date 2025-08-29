@@ -8,6 +8,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { nanoid } from 'nanoid';
 import fs from 'fs';
+import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,20 +65,6 @@ await db.exec(`CREATE TABLE IF NOT EXISTS videos (
   createdAt TEXT
 )`);
 
-// // Create table if not exists
-// await db.exec(`
-//   CREATE TABLE IF NOT EXISTS videos (
-//     id TEXT PRIMARY KEY,
-//     owner TEXT,
-//     originalName TEXT,
-//     inputPath TEXT,
-//     outputPath TEXT,
-//     status TEXT,
-//     format TEXT,
-//     createdAt TEXT
-//   )
-// `);
-
 // api routes
 
 // Login route
@@ -112,30 +100,41 @@ app.post('/upload', authMiddleware, async (req, res) => {
 });
 
 // transcode video
-app.post("/transcode", authMiddleware, (req, res) => {
+app.post("/transcode", authMiddleware, async (req, res) => {
     const { id, format } = req.body;
 
-    db.get(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [id, req.user.username], (err, video) => {
-        if (err || !video) return res.status(404).send("Video not found");
+    const video = await db.get(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [id, req.user.username]);
+    if (!video) return res.status(404).json({ error: "Video not found" });
 
-        const inputPath = path.join("uploads", video.filename);
-        const outputName = `${path.parse(video.filename).name}.${format}`;
-        const outputPath = path.join("transcoded", outputName);
+    const inputPath = video.inputPath;
+    const outputName = `${path.parse(video.originalName).name}.${format}`;
+    const outputPath = path.join(transcodedDir, outputName);
 
-        ffmpeg(inputPath)
-            .toFormat(format)
-            .save(outputPath)
-            .on("end", async () => {
+    // Respond immediately
+    res.json({ message: "Transcoding started" });
+
+    console.log("Starting ffmpeg transcoding...", inputPath, "→", outputPath);
+
+    ffmpeg(inputPath)
+        .toFormat(format)
+        .save(outputPath)
+        .on("end", async () => {
+            console.log("Transcoding finished:", outputPath);
+
+            try {
                 await db.run(
                     `UPDATE videos SET status = ?, outputPath = ?, format = ? WHERE id = ?`,
                     ["transcoded", outputPath, format, id]
                 );
-                res.json({ message: "Transcoding complete", file: outputName });
-            })
-            .on("error", err => res.status(500).send(err.message));
-
-    });
-})
+                console.log("DB updated for video", id);
+            } catch (err) {
+                console.error("DB update failed:", err);
+            }
+        })
+        .on("error", (err) => {
+            console.error("ffmpeg error:", err.message);
+        });
+});
 
 // List videos for user
 app.get('/videos', authMiddleware, async (req, res) => {
@@ -154,7 +153,9 @@ app.get('/videos/:id', authMiddleware, async (req, res) => {
 app.get('/download/:id', authMiddleware, async (req, res) => {
     const video = await db.get(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [req.params.id, req.user.username]);
     if (!video) return res.status(404).json({ error: 'Video not found' });
-    res.download(video.inputPath, video.originalName);
+
+    const pathToSend = video.status === "transcoded" ? video.outputPath : video.inputPath;
+    res.download(pathToSend, video.originalName);
 });
 
 // start server

@@ -1,84 +1,134 @@
+<!--<!DOCTYPE html>-->
+<!--<html lang="en">-->
+<!--<head>-->
+<!--    <meta charset="UTF-8">-->
+<!--    <title>Video Uploader</title>-->
+<!--</head>-->
+<!--<body>-->
+<!--<h1>Video Uploader</h1>-->
+
+<!--&lt;!&ndash; Login form &ndash;&gt;-->
+<!--<h2>Login</h2>-->
+<!--<input type="text" id="username" placeholder="Username">-->
+<!--<input type="password" id="password" placeholder="Password">-->
+<!--<button id="loginBtn">Login</button>-->
+
+<!--<p id="tokenDisplay"></p>-->
+
+<!--&lt;!&ndash; Upload form &ndash;&gt;-->
+<!--<h2>Upload Video</h2>-->
+<!--<input type="file" id="videoFile">-->
+<!--<button id="uploadBtn">Upload</button>-->
+
+<!--<h2>Uploaded Videos</h2>-->
+<!--<ul id="videoList"></ul>-->
+
+<!--<script>-->
+<!--    let token = '';-->
+
+<!--    // Login-->
+<!--    document.getElementById('loginBtn').onclick = async () => {-->
+<!--        const username = document.getElementById('username').value;-->
+<!--        const password = document.getElementById('password').value;-->
+
+<!--        const res = await fetch('/login', {-->
+<!--            method: 'POST',-->
+<!--            headers: { 'Content-Type': 'application/json' },-->
+<!--            body: JSON.stringify({ username, password })-->
+<!--        });-->
+
+<!--        if (!res.ok) return alert('Login failed!');-->
+<!--        const data = await res.json();-->
+<!--        token = data.token;-->
+<!--        document.getElementById('tokenDisplay').textContent = `Token: ${token}`;-->
+<!--        loadVideos();-->
+<!--    };-->
+
+<!--    // Upload video-->
+<!--    document.getElementById('uploadBtn').onclick = async () => {-->
+<!--        const file = document.getElementById('videoFile').files[0];-->
+<!--        if (!file) return alert('Select a file!');-->
+
+<!--        const formData = new FormData();-->
+<!--        formData.append('video', file);-->
+
+<!--        const res = await fetch('/upload', {-->
+<!--            method: 'POST',-->
+<!--            headers: { 'Authorization': 'Bearer ' + token },-->
+<!--            body: formData-->
+<!--        });-->
+
+<!--        if (!res.ok) return alert('Upload failed!');-->
+<!--        const data = await res.json();-->
+<!--        alert(`Uploaded! ID: ${data.id}`);-->
+<!--        loadVideos();-->
+<!--    };-->
+
+<!--    // Load videos-->
+<!--    async function loadVideos() {-->
+<!--        const res = await fetch('/videos', {-->
+<!--            headers: { 'Authorization': 'Bearer ' + token }-->
+<!--        });-->
+<!--        if (!res.ok) return;-->
+<!--        const videos = await res.json();-->
+<!--        const list = document.getElementById('videoList');-->
+<!--        list.innerHTML = '';-->
+<!--        videos.forEach(v => {-->
+<!--            const li = document.createElement('li');-->
+<!--            li.textContent = `${v.id}: ${v.filename || v.originalName} (${v.status})`;-->
+<!--            list.appendChild(li);-->
+<!--        });-->
+<!--    }-->
+<!--</script>-->
+<!--</body>-->
+<!--</html>-->
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Video Uploader</title>
+    <title>Video App</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<h1>Video Uploader</h1>
+<h1>Video Management App</h1>
 
-<!-- Login form -->
-<h2>Login</h2>
-<input type="text" id="username" placeholder="Username">
-<input type="password" id="password" placeholder="Password">
-<button id="loginBtn">Login</button>
+<!-- Navigation -->
+<nav>
+    <button onclick="showPage('loginPage')">Login</button>
+    <button onclick="showPage('uploadPage')">Upload</button>
+    <button onclick="showPage('videosPage')">My Videos</button>
+</nav>
 
-<p id="tokenDisplay"></p>
+<!-- Login Page -->
+<section id="loginPage" class="page">
+    <h2>Login</h2>
+    <form id="loginForm">
+        <input type="text" id="username" placeholder="Username" required><br>
+        <input type="password" id="password" placeholder="Password" required><br>
+        <button type="submit">Login</button>
+    </form>
+    <p id="loginMessage"></p>
+</section>
 
-<!-- Upload form -->
-<h2>Upload Video</h2>
-<input type="file" id="videoFile">
-<button id="uploadBtn">Upload</button>
+<!-- Upload Page -->
+<section id="uploadPage" class="page" style="display:none;">
+    <h2>Upload Video</h2>
+    <form id="uploadForm" enctype="multipart/form-data">
+        <input type="file" id="videoFile" name="video" accept="video/*" required><br>
+        <button type="submit">Upload</button>
+    </form>
+    <p id="uploadMessage"></p>
+</section>
 
-<h2>Uploaded Videos</h2>
-<ul id="videoList"></ul>
+<!-- Videos Page -->
+<section id="videosPage" class="page" style="display:none;">
+    <h2>My Videos</h2>
+    <button onclick="fetchVideos()">Refresh List</button>
+    <ul id="videoList"></ul>
+</section>
 
-<script>
-    let token = '';
-
-    // Login
-    document.getElementById('loginBtn').onclick = async () => {
-        const username = document.getElementById('username').value;
-        const password = document.getElementById('password').value;
-
-        const res = await fetch('/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
-        });
-
-        if (!res.ok) return alert('Login failed!');
-        const data = await res.json();
-        token = data.token;
-        document.getElementById('tokenDisplay').textContent = `Token: ${token}`;
-        loadVideos();
-    };
-
-    // Upload video
-    document.getElementById('uploadBtn').onclick = async () => {
-        const file = document.getElementById('videoFile').files[0];
-        if (!file) return alert('Select a file!');
-
-        const formData = new FormData();
-        formData.append('video', file);
-
-        const res = await fetch('/upload', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + token },
-            body: formData
-        });
-
-        if (!res.ok) return alert('Upload failed!');
-        const data = await res.json();
-        alert(`Uploaded! ID: ${data.id}`);
-        loadVideos();
-    };
-
-    // Load videos
-    async function loadVideos() {
-        const res = await fetch('/videos', {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
-        if (!res.ok) return;
-        const videos = await res.json();
-        const list = document.getElementById('videoList');
-        list.innerHTML = '';
-        videos.forEach(v => {
-            const li = document.createElement('li');
-            li.textContent = `${v.id}: ${v.filename || v.originalName} (${v.status})`;
-            list.appendChild(li);
-        });
-    }
-</script>
+<script src="app.js"></script>
 </body>
 </html>

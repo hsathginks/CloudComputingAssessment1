@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/hsathginks/CloudComputingAssessment1#readme",
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "axios": "^1.11.0",
     "express": "^5.1.0",
     "express-fileupload": "^1.5.2",
