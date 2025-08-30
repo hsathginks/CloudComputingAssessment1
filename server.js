@@ -1,9 +1,12 @@
+import dotenv from "dotenv";
+dotenv.config();
 import express from 'express';
 import fileUpload from 'express-fileupload';
 import jwt from 'jsonwebtoken';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import ffmpeg from "fluent-ffmpeg";
+import fetch from "node-fetch";
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { nanoid } from 'nanoid';
@@ -48,22 +51,40 @@ function authMiddleware(req, res, next) {
     });
 }
 
-// sqlite db setup
+// server start with db setup
 const db = await open({
     filename: "./db/video.db",
     driver: sqlite3.Database
 });
 
 await db.exec(`CREATE TABLE IF NOT EXISTS videos (
-  id TEXT PRIMARY KEY,
-  owner TEXT,
-  originalName TEXT,
-  inputPath TEXT,
-  outputPath TEXT,
-  status TEXT,
-  format TEXT,
-  createdAt TEXT
+id TEXT PRIMARY KEY,
+owner TEXT,
+originalName TEXT,
+inputPath TEXT,
+outputPath TEXT,
+status TEXT,
+format TEXT,
+createdAt TEXT
 )`);
+
+// external api things
+const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY; // keep it safe in env
+
+async function fetchRelatedYouTubeVideos(query) {
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q=${encodeURIComponent(query)}&maxResults=3&key=${YOUTUBE_API_KEY}`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+        console.error("YouTube API error:", await resp.text());
+        return [];
+    }
+    const data = await resp.json();
+    return data.items.map(item => ({
+        title: item.snippet.title,
+        thumbnail: item.snippet.thumbnails?.default?.url,
+        link: `https://www.youtube.com/watch?v=${item.id.videoId}`
+    }));
+}
 
 // api routes
 
@@ -138,15 +159,26 @@ app.post("/transcode", authMiddleware, async (req, res) => {
 
 // List videos for user
 app.get('/videos', authMiddleware, async (req, res) => {
+    console.log("fetching videos.");
     const videos = await db.all(`SELECT * FROM videos WHERE owner = ?`, [req.user.username]);
     res.json(videos);
 });
 
 // Get single video metadata
 app.get('/videos/:id', authMiddleware, async (req, res) => {
-    const video = await db.get(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [req.params.id, req.user.username]);
+    const video = await db.get(
+        `SELECT * FROM videos WHERE id = ? AND owner = ?`,
+        [req.params.id, req.user.username]
+    );
     if (!video) return res.status(404).json({ error: 'Video not found' });
-    res.json(video);
+
+    // Query YouTube using the video’s original name
+    const related = await fetchRelatedYouTubeVideos(baseName);
+
+    res.json({
+        ...video,
+        relatedVideos: related
+    });
 });
 
 // Download video file
@@ -156,6 +188,21 @@ app.get('/download/:id', authMiddleware, async (req, res) => {
 
     const pathToSend = video.status === "transcoded" ? video.outputPath : video.inputPath;
     res.download(pathToSend, video.originalName);
+});
+
+app.get("/youtube", authMiddleware, async (req, res) => {
+    const query = req.query.query;
+    if (!query) return res.status(400).json({ error: "No query provided" });
+
+    try {
+        const apiKey = process.env.YOUTUBE_API_KEY;
+        const response = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&key=${apiKey}&maxResults=5&type=video`);
+        const data = await response.json();
+        res.json(data);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch from YouTube" });
+    }
 });
 
 // start server

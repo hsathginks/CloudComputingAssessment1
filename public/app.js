@@ -46,7 +46,37 @@ document.getElementById("uploadForm").addEventListener("submit", async (e) => {
     document.getElementById("uploadMessage").textContent = res.ok ? "Upload successful!" : data.error;
 });
 
-// Fetch videos
+// Fetch related videos from youtube api
+async function fetchRelatedVideos(originalName, containerDiv) {
+    try {
+        const res = await fetch(`/youtube?query=${encodeURIComponent(originalName)}`, {
+            headers: { "Authorization": `Bearer ${token}` }
+        });
+
+        if (!res.ok) {
+            containerDiv.innerHTML = "<p>Related videos not available</p>";
+            return;
+        }
+
+        const data = await res.json();
+        containerDiv.innerHTML = ""; // clear old content
+
+        data.items.forEach(video => {
+            const a = document.createElement("a");
+            a.href = `https://www.youtube.com/watch?v=${video.id.videoId}`;
+            a.target = "_blank";
+            a.textContent = video.snippet.title;
+            containerDiv.appendChild(a);
+            containerDiv.appendChild(document.createElement("br"));
+        });
+    } catch (err) {
+        console.error(err);
+        containerDiv.innerHTML = "<p>Error loading related videos</p>";
+    }
+}
+
+
+// Fetch videos and render list
 async function fetchVideos() {
     const res = await fetch("/videos", {
         headers: { "Authorization": `Bearer ${token}` }
@@ -61,11 +91,17 @@ async function fetchVideos() {
     }
 
     const videos = await res.json();
+
     videos.forEach(video => {
         const li = document.createElement("li");
         li.textContent = `${video.originalName} [${video.status}]`;
 
         if (video.status === "uploaded") {
+            // Transcode button
+            const btn = document.createElement("button");
+            btn.textContent = "Transcode to";
+            btn.onclick = () => transcodeVideo(video.id, select.value);
+
             // Create format selector
             const select = document.createElement("select");
             ["mp4", "mp3", "avi", "mov"].forEach(f => {
@@ -74,27 +110,48 @@ async function fetchVideos() {
                 option.textContent = f.toUpperCase();
                 select.appendChild(option);
             });
-
-            // Transcode button
-            const btn = document.createElement("button");
-            btn.textContent = "Transcode";
-            btn.onclick = () => transcodeVideo(video.id, select.value);
-
-            li.appendChild(select);
+            console.lo
             li.appendChild(btn);
+            li.appendChild(select);
         }
 
+        // Only show transcoding options if video is still "uploaded"
         if (video.status === "transcoded") {
-            const download = document.createElement("a");
-            download.href = `/download/${video.id}`;
-            download.textContent = "Download";
-            download.setAttribute("target", "_blank");
-            li.appendChild(download);
+            const downloadBtn = document.createElement("button");
+            downloadBtn.textContent = "Download";
+            downloadBtn.onclick = async () => {
+                const res = await fetch(`/download/${video.id}`, {
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                if (!res.ok) {
+                    alert("Download failed: " + res.statusText);
+                    return;
+                }
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = video.originalName;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            };
+            li.appendChild(downloadBtn);
+
+            // Related videos container
+            const relatedDiv = document.createElement("div");
+            relatedDiv.className = "related-videos";
+            li.appendChild(relatedDiv);
+
+            // Fetch related videos
+            fetchRelatedVideos(video.originalName, relatedDiv);
         }
 
         list.appendChild(li);
     });
 }
+
 
 // Transcode video
 async function transcodeVideo(id, format) {
