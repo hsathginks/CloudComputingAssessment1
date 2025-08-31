@@ -3,7 +3,7 @@ dotenv.config();
 import express from 'express';
 import fileUpload from 'express-fileupload';
 import jwt from 'jsonwebtoken';
-import sqlite3 from 'sqlite3';
+import mysql from 'mysql2/promise';
 import { open } from 'sqlite';
 import ffmpeg from "fluent-ffmpeg";
 import fetch from "node-fetch";
@@ -51,22 +51,52 @@ function authMiddleware(req, res, next) {
     });
 }
 
-// server start with db setup
-const db = await open({
-    filename: "./db/video.db",
-    driver: sqlite3.Database
+// mariadb setup
+const {
+    MYSQL_HOST = 'mariadb',
+    MYSQL_PORT = 3306,
+    MYSQL_DATABASE = 'video_app',
+    MYSQL_USER = 'root',
+    MYSQL_PASSWORD = 'example'
+} = process.env;
+
+
+// create pool and ensure DB exists
+const pool = await mysql.createPool({
+    host: MYSQL_HOST,
+    port: Number(MYSQL_PORT),
+    user: MYSQL_USER,
+    password: MYSQL_PASSWORD,
+    database: MYSQL_DATABASE,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 });
 
-await db.exec(`CREATE TABLE IF NOT EXISTS videos (
-id TEXT PRIMARY KEY,
-owner TEXT,
-originalName TEXT,
-inputPath TEXT,
-outputPath TEXT,
-status TEXT,
-format TEXT,
-createdAt TEXT
-)`);
+// create table if missing
+await pool.execute(`CREATE TABLE IF NOT EXISTS videos (
+                                                          id VARCHAR(64) PRIMARY KEY,
+    owner VARCHAR(255),
+    originalName TEXT,
+    inputPath TEXT,
+    outputPath TEXT,
+    status VARCHAR(64),
+    format VARCHAR(32),
+    createdAt DATETIME
+    )`);
+
+// helper wrappers to replace db.get/db.run/db.all
+const dbGet = async (sql, params=[]) => {
+    const [rows] = await pool.query(sql, params);
+    return rows[0];
+};
+const dbAll = async (sql, params=[]) => {
+    const [rows] = await pool.query(sql, params);
+    return rows; // array
+};
+const dbRun = async (sql, params=[]) => {
+    await pool.execute(sql, params);
+};
 
 // external api things
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY; // keep it safe in env
@@ -112,7 +142,7 @@ app.post('/upload', authMiddleware, async (req, res) => {
 
     const createdAt = new Date().toISOString();
 
-    await db.run(
+    await dbGet(
         `INSERT INTO videos (id, owner, originalName, inputPath, status, createdAt) VALUES (?, ?, ?, ?, ?, ?)`,
         [id, req.user.username, video.name, uploadPath, 'uploaded', createdAt]
     );
@@ -124,7 +154,7 @@ app.post('/upload', authMiddleware, async (req, res) => {
 app.post("/transcode", authMiddleware, async (req, res) => {
     const { id, format } = req.body;
 
-    const video = await db.get(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [id, req.user.username]);
+    const video = await dbGet(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [id, req.user.username]);
     if (!video) return res.status(404).json({ error: "Video not found" });
 
     const inputPath = video.inputPath;
@@ -143,7 +173,7 @@ app.post("/transcode", authMiddleware, async (req, res) => {
             console.log("Transcoding finished:", outputPath);
 
             try {
-                await db.run(
+                await dbRun(
                     `UPDATE videos SET status = ?, outputPath = ?, format = ? WHERE id = ?`,
                     ["transcoded", outputPath, format, id]
                 );
@@ -160,13 +190,13 @@ app.post("/transcode", authMiddleware, async (req, res) => {
 // List videos for user
 app.get('/videos', authMiddleware, async (req, res) => {
     console.log("fetching videos.");
-    const videos = await db.all(`SELECT * FROM videos WHERE owner = ?`, [req.user.username]);
+    const videos = await dbAll(`SELECT * FROM videos WHERE owner = ?`, [req.user.username]);
     res.json(videos);
 });
 
 // Get single video metadata
 app.get('/videos/:id', authMiddleware, async (req, res) => {
-    const video = await db.get(
+    const video = await dbGet(
         `SELECT * FROM videos WHERE id = ? AND owner = ?`,
         [req.params.id, req.user.username]
     );
@@ -183,7 +213,7 @@ app.get('/videos/:id', authMiddleware, async (req, res) => {
 
 // Download video file
 app.get('/download/:id', authMiddleware, async (req, res) => {
-    const video = await db.get(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [req.params.id, req.user.username]);
+    const video = await dbGet(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [req.params.id, req.user.username]);
     if (!video) return res.status(404).json({ error: 'Video not found' });
 
     const pathToSend = video.status === "transcoded" ? video.outputPath : video.inputPath;
