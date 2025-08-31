@@ -53,37 +53,56 @@ function authMiddleware(req, res, next) {
 
 // mariadb setup
 const {
-    MYSQL_HOST = 'mariadb',
-    MYSQL_PORT = 3306,
-    MYSQL_DATABASE = 'video_app',
-    MYSQL_USER = 'root',
-    MYSQL_PASSWORD = 'example'
+    DB_HOST = 'mariadb',
+    DB_PORT = 3306,
+    DB_NAME = 'videodb',
+    DB_USER = 'appuser',
+    DB_PASSWORD = 'apppassword'
 } = process.env;
 
+let pool;
 
-// create pool and ensure DB exists
-const pool = await mysql.createPool({
-    host: MYSQL_HOST,
-    port: Number(MYSQL_PORT),
-    user: MYSQL_USER,
-    password: MYSQL_PASSWORD,
-    database: MYSQL_DATABASE,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
-});
+// retry until MariaDB is ready?
+async function initDb() {
+    let connected = false;
+    while (!connected) {
+        try {
+            pool = await mysql.createPool({
+                host: DB_HOST,
+                port: Number(DB_PORT),
+                user: DB_USER,
+                password: DB_PASSWORD,
+                database: DB_NAME,
+                waitForConnections: true,
+                connectionLimit: 10,
+                queueLimit: 0,
+            });
 
-// create table if missing
-await pool.execute(`CREATE TABLE IF NOT EXISTS videos (
-                                                          id VARCHAR(64) PRIMARY KEY,
-    owner VARCHAR(255),
-    originalName TEXT,
-    inputPath TEXT,
-    outputPath TEXT,
-    status VARCHAR(64),
-    format VARCHAR(32),
-    createdAt DATETIME
-    )`);
+            // test connection
+            await pool.query("SELECT 1");
+            connected = true;
+            console.log("Connected to MariaDB");
+
+            // create table if missing
+            await pool.execute(`
+        CREATE TABLE IF NOT EXISTS videos (
+          id VARCHAR(64) PRIMARY KEY,
+          owner VARCHAR(255),
+          originalName TEXT,
+          inputPath TEXT,
+          outputPath TEXT,
+          status VARCHAR(64),
+          format VARCHAR(32),
+          createdAt DATETIME(3)
+        )
+      `);
+
+        } catch (err) {
+            console.log("⏳ Waiting for MariaDB...");
+            await new Promise((r) => setTimeout(r, 2000));
+        }
+    }
+}
 
 // helper wrappers to replace db.get/db.run/db.all
 const dbGet = async (sql, params=[]) => {
@@ -97,6 +116,11 @@ const dbAll = async (sql, params=[]) => {
 const dbRun = async (sql, params=[]) => {
     await pool.execute(sql, params);
 };
+
+// Start the whole thing
+initDb().then(() => {
+    app.listen(3000, () => console.log("App listening on port 3000"));
+});
 
 // external api things
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY; // keep it safe in env
@@ -140,7 +164,7 @@ app.post('/upload', authMiddleware, async (req, res) => {
 
     await video.mv(uploadPath);
 
-    const createdAt = new Date().toISOString();
+    const createdAt = new Date();
 
     await dbGet(
         `INSERT INTO videos (id, owner, originalName, inputPath, status, createdAt) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -202,6 +226,7 @@ app.get('/videos/:id', authMiddleware, async (req, res) => {
     );
     if (!video) return res.status(404).json({ error: 'Video not found' });
 
+    const baseName = path.parse(video.originalName).name;
     // Query YouTube using the video’s original name
     const related = await fetchRelatedYouTubeVideos(baseName);
 
