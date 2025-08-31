@@ -131,7 +131,15 @@ async function fetchVideos() {
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
-                a.download = video.originalName;
+
+                // Use correct filename depending on status
+                if (video.status === "transcoded") {
+                    // extract filename from outputPath (from back-end)
+                    a.download = video.outputPath.split("/").pop();
+                } else {
+                    a.download = video.originalName;
+                }
+
                 document.body.appendChild(a);
                 a.click();
                 a.remove();

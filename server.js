@@ -242,7 +242,12 @@ app.get('/download/:id', authMiddleware, async (req, res) => {
     if (!video) return res.status(404).json({ error: 'Video not found' });
 
     const pathToSend = video.status === "transcoded" ? video.outputPath : video.inputPath;
-    res.download(pathToSend, video.originalName);
+
+    // Use the real filename (with extension) for transcoded files
+    const downloadName = video.status === "transcoded" ? path.basename(video.outputPath) : video.originalName;
+
+    res.download(pathToSend, downloadName);
+
 });
 
 app.get("/youtube", authMiddleware, async (req, res) => {

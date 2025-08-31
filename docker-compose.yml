@@ -11,6 +11,9 @@ services:
       - DB_NAME=videodb
     depends_on:
       - mariadb
+    volumes:
+      - ./uploads:/app/uploads
+      - ./transcoded:/app/transcoded
 
   mariadb:
     image: mariadb:10.11
