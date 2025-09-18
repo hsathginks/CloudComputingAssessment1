@@ -3,17 +3,18 @@ services:
     build: .
     container_name: myapp
     ports:
-      - "3000:3000"
+      - "80:3000"  # CHANGED FROM 3000:3000. Now use port 80 on the host.
     environment:
       - DB_HOST=mariadb
       - DB_USER=appuser
       - DB_PASSWORD=apppassword
       - DB_NAME=videodb
     depends_on:
-      - mariadb
+      mariadb:
+        condition: service_healthy # Wait for the DB to be healthy
     volumes:
-      - ./uploads:/app/uploads
-      - ./transcoded:/app/transcoded
+      - uploads_volume:/app/uploads  # Use a named volume
+      - transcoded_volume:/app/transcoded # Use a named volume
 
   mariadb:
     image: mariadb:10.11
@@ -26,8 +27,13 @@ services:
       - MYSQL_PASSWORD=apppassword
     volumes:
       - db_data:/var/lib/mysql
-    ports:
-      - "3306:3306"
+    healthcheck: # This tells Docker how to check if the DB is ready
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u$$MYSQL_USER", "-p$$MYSQL_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
-  db_data:
+  db_data: # Volume for MariaDB data
+  uploads_volume: # Volume for uploads
+  transcoded_volume: # Volume for transcoded files
