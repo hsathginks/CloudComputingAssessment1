@@ -15,6 +15,11 @@ services:
     volumes:
       - uploads_volume:/app/uploads  # Use a named volume
       - transcoded_volume:/app/transcoded # Use a named volume
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'    # Limit to 1 CPU core
+          memory: '512M'  # Limit to 512 Megabytes of RAM
 
   mariadb:
     image: mariadb:10.11
