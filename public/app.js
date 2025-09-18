@@ -110,13 +110,13 @@ async function fetchVideos() {
                 option.textContent = f.toUpperCase();
                 select.appendChild(option);
             });
-            console.lo
+
             li.appendChild(btn);
             li.appendChild(select);
         }
 
-        // Only show transcoding options if video is still "uploaded"
-        if (video.status === "transcoded") {
+        // Change "transcoded" to "completed" here
+        if (video.status === "completed") {
             const downloadBtn = document.createElement("button");
             downloadBtn.textContent = "Download";
             downloadBtn.onclick = async () => {
@@ -132,8 +132,8 @@ async function fetchVideos() {
                 const a = document.createElement("a");
                 a.href = url;
 
-                // Use correct filename depending on status
-                if (video.status === "transcoded") {
+                // Fix this condition too - change to "completed"
+                if (video.status === "completed") {
                     // extract filename from outputPath (from back-end)
                     a.download = video.outputPath.split("/").pop();
                 } else {
@@ -163,16 +163,68 @@ async function fetchVideos() {
 
 // Transcode video
 async function transcodeVideo(id, format) {
-    const res = await fetch("/transcode", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ id, format })
-    });
+    try {
+        const res = await fetch("/transcode", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({ id, format })
+        });
 
-    const data = await res.json();
-    alert(res.ok ? "Transcoding started" : data.error);
-    fetchVideos();
+        if (!res.ok) {
+            const errorData = await res.json();
+            throw new Error(errorData.error || 'Transcoding request failed');
+        }
+
+        // Get the video list item element to update its status
+        const videoItem = document.querySelector(`li:has(button[onclick*="${id}"])`);
+        const statusElement = videoItem ? videoItem.querySelector('.status') || document.createElement('span') : null;
+        if (statusElement && !statusElement.classList.contains('status')) {
+            statusElement.className = 'status';
+            videoItem.appendChild(statusElement);
+        }
+
+        // Function to poll for status updates
+        const checkStatus = async () => {
+            try {
+                const statusRes = await fetch(`/videos/${id}/status`, {
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+
+                if (!statusRes.ok) throw new Error('Status check failed');
+
+                const statusData = await statusRes.json();
+
+                // Update the UI with the current status
+                if (statusElement) {
+                    statusElement.textContent = `Status: ${statusData.status}`;
+                }
+
+                // Handle different status outcomes
+                if (statusData.status === 'completed') {
+                    alert('Transcoding finished successfully!');
+                    fetchVideos(); // Refresh the entire list
+                } else if (statusData.status === 'error') {
+                    alert('Transcoding failed. Please try again.');
+                } else if (statusData.status === 'processing') {
+                    // If still processing, check again in 3 seconds
+                    setTimeout(checkStatus, 3000);
+                }
+            } catch (error) {
+                console.error("Status check error:", error);
+                if (statusElement) {
+                    statusElement.textContent = 'Status: check failed';
+                }
+            }
+        };
+
+        // Start pollinåçg
+        checkStatus();
+
+    } catch (error) {
+        console.error("Transcoding error:", error);
+        alert('Error starting transcoding: ' + error.message);
+    }
 }

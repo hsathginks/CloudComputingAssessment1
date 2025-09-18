@@ -15,8 +15,12 @@ services:
     volumes:
       - uploads_volume:/app/uploads
       - transcoded_volume:/app/transcoded
-    mem_limit: 512M
-    cpus: '1.0'
+    deploy:
+      resources:
+        limits:
+          memory: 1500M    # Leave ~500MB for system + MariaDB
+        reservations:
+          memory: 512M
 
   mariadb:
     image: mariadb:10.11
@@ -30,10 +34,16 @@ services:
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u$$MYSQL_USER", "-p$$MYSQL_PASSWORD"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "appuser", "-papppassword" ]
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 400M    # MariaDB doesn't need much for basic ops
+        reservations:
+          memory: 200M
 
 volumes:
   db_data:

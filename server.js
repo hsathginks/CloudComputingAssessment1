@@ -28,7 +28,7 @@ const app = express();
 // Serve front-end files
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.use(express.json());
+app.use(express.json({ limit: '200mb' }));
 app.use(fileUpload());
 
 // JWT
@@ -177,38 +177,67 @@ app.post('/upload', authMiddleware, async (req, res) => {
 // transcode video
 app.post("/transcode", authMiddleware, async (req, res) => {
     const { id, format } = req.body;
+    try {
+        const video = await dbGet(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [id, req.user.username]);
+        if (!video) return res.status(404).json({ error: "Video not found" });
 
-    const video = await dbGet(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [id, req.user.username]);
-    if (!video) return res.status(404).json({ error: "Video not found" });
+        // 1. Update status to 'processing' immediately
+        await dbRun(`UPDATE videos SET status = ? WHERE id = ?`, ['processing', id]);
 
-    const inputPath = video.inputPath;
-    const outputName = `${path.parse(video.originalName).name}.${format}`;
-    const outputPath = path.join(transcodedDir, outputName);
+        // 2. Send response to client
+        res.json({ message: "Transcoding started" });
 
-    // Respond immediately
-    res.json({ message: "Transcoding started" });
+        // 3. Start the long-running process
+        const inputPath = video.inputPath;
+        const outputName = `${path.parse(video.originalName).name}.${format}`;
+        const outputPath = path.join(transcodedDir, outputName);
 
-    console.log("Starting ffmpeg transcoding...", inputPath, "→", outputPath);
-
-    ffmpeg(inputPath)
-        .toFormat(format)
-        .save(outputPath)
-        .on("end", async () => {
-            console.log("Transcoding finished:", outputPath);
-
-            try {
+        ffmpeg(inputPath)
+            .videoCodec('libx264')
+            .audioCodec('aac')
+            .size('1280x720')         // Reasonable HD resolution
+            .videoBitrate('1000k')    // Good quality
+            .audioBitrate('128k')
+            .outputOptions([
+                '-preset medium',       // Good balance of speed/quality
+                '-crf 23',             // Standard quality
+                '-maxrate 1500k',
+                '-bufsize 3000k',
+                '-threads 2'           // Use both CPU cores
+            ])
+            .toFormat(format)
+            .on("end", async () => {
+                // 4. On success, update status to 'completed'
                 await dbRun(
                     `UPDATE videos SET status = ?, outputPath = ?, format = ? WHERE id = ?`,
-                    ["transcoded", outputPath, format, id]
+                    ["completed", outputPath, format, id]
                 );
-                console.log("DB updated for video", id);
-            } catch (err) {
-                console.error("DB update failed:", err);
-            }
-        })
-        .on("error", (err) => {
-            console.error("ffmpeg error:", err.message);
-        });
+            })
+            .on("error", async (err) => {
+                // 5. On error, update status to 'error'
+                console.error("Transcoding error:", err);
+                await dbRun(`UPDATE videos SET status = ? WHERE id = ?`, ['error', id]);
+            })
+            .save(outputPath);
+
+    } catch (error) {
+        console.error("Error in /transcode:", error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// endpoint to check a video's status
+app.get('/videos/:id/status', authMiddleware, async (req, res) => {
+    try {
+        const video = await dbGet(
+            `SELECT status FROM videos WHERE id = ? AND owner = ?`,
+            [req.params.id, req.user.username]
+        );
+        if (!video) return res.status(404).json({ error: 'Video not found' });
+        res.json({ status: video.status }); // Returns: 'uploaded', 'processing', 'completed', 'error'
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch status' });
+    }
 });
 
 // List videos for user
@@ -241,13 +270,12 @@ app.get('/download/:id', authMiddleware, async (req, res) => {
     const video = await dbGet(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [req.params.id, req.user.username]);
     if (!video) return res.status(404).json({ error: 'Video not found' });
 
-    const pathToSend = video.status === "transcoded" ? video.outputPath : video.inputPath;
+    const pathToSend = video.status === "completed" ? video.outputPath : video.inputPath;
 
-    // Use the real filename (with extension) for transcoded files
-    const downloadName = video.status === "transcoded" ? path.basename(video.outputPath) : video.originalName;
+    // Use the real filename (with extension) for completed files
+    const downloadName = video.status === "completed" ? path.basename(video.outputPath) : video.originalName;
 
     res.download(pathToSend, downloadName);
-
 });
 
 app.get("/youtube", authMiddleware, async (req, res) => {
@@ -264,7 +292,3 @@ app.get("/youtube", authMiddleware, async (req, res) => {
         res.status(500).json({ error: "Failed to fetch from YouTube" });
     }
 });
-
-// start server
-const PORT = 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
