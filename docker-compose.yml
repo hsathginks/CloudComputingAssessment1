@@ -5,47 +5,16 @@ services:
     ports:
       - "80:3000"
     environment:
-      - DB_HOST=mariadb
-      - DB_USER=appuser
-      - DB_PASSWORD=apppassword
-      - DB_NAME=videodb
-    depends_on:
-      mariadb:
-        condition: service_healthy
+      - AWS_REGION=ap-southeast-2
+      - DB_HOST=${DB_HOST}  # Private IP of database EC2
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - JWT_SECRET=${JWT_SECRET}
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
     volumes:
-      - uploads_volume:/app/uploads
-      - transcoded_volume:/app/transcoded
+      - ~/.aws:/root/.aws:ro
     deploy:
       resources:
         limits:
-          memory: 1500M    # Leave ~500MB for system + MariaDB
+          memory: 1500M    # Leave 500MB for system
         reservations:
           memory: 512M
-
-  mariadb:
-    image: mariadb:10.11
-    container_name: mydb
-    restart: always
-    environment:
-      - MYSQL_ROOT_PASSWORD=rootpassword
-      - MYSQL_DATABASE=videodb
-      - MYSQL_USER=appuser
-      - MYSQL_PASSWORD=apppassword
-    volumes:
-      - db_data:/var/lib/mysql
-    healthcheck:
-      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "appuser", "-papppassword" ]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    deploy:
-      resources:
-        limits:
-          memory: 400M    # MariaDB doesn't need much for basic ops
-        reservations:
-          memory: 200M
-
-volumes:
-  db_data:
-  uploads_volume:
-  transcoded_volume:

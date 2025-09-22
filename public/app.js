@@ -33,17 +33,28 @@ document.getElementById("uploadForm").addEventListener("submit", async (e) => {
     const file = document.getElementById("videoFile").files[0];
     if (!file) return;
 
+    // Show upload progress
+    document.getElementById("uploadMessage").textContent = "Uploading to S3...";
+
     const formData = new FormData();
     formData.append("video", file);
 
-    const res = await fetch("/upload", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${token}` },
-        body: formData
-    });
+    try {
+        const res = await fetch("/upload", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${token}` },
+            body: formData
+        });
 
-    const data = await res.json();
-    document.getElementById("uploadMessage").textContent = res.ok ? "Upload successful!" : data.error;
+        const data = await res.json();
+        if (res.ok) {
+            document.getElementById("uploadMessage").textContent = "Upload successful! File stored in S3.";
+        } else {
+            document.getElementById("uploadMessage").textContent = data.error || "Upload failed";
+        }
+    } catch (error) {
+        document.getElementById("uploadMessage").textContent = "Upload failed: " + error.message;
+    }
 });
 
 // Fetch related videos from youtube api
@@ -74,7 +85,6 @@ async function fetchRelatedVideos(originalName, containerDiv) {
         containerDiv.innerHTML = "<p>Error loading related videos</p>";
     }
 }
-
 
 // Fetch videos and render list
 async function fetchVideos() {
@@ -115,35 +125,31 @@ async function fetchVideos() {
             li.appendChild(select);
         }
 
-        // Change "transcoded" to "completed" here
+        // Show download and related videos for completed transcoding
         if (video.status === "completed") {
             const downloadBtn = document.createElement("button");
             downloadBtn.textContent = "Download";
             downloadBtn.onclick = async () => {
-                const res = await fetch(`/download/${video.id}`, {
-                    headers: { "Authorization": `Bearer ${token}` }
-                });
-                if (!res.ok) {
-                    alert("Download failed: " + res.statusText);
-                    return;
-                }
-                const blob = await res.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
+                try {
+                    // Get pre-signed URL from server
+                    const res = await fetch(`/download/${video.id}`, {
+                        headers: { "Authorization": `Bearer ${token}` }
+                    });
 
-                // Fix this condition too - change to "completed"
-                if (video.status === "completed") {
-                    // extract filename from outputPath (from back-end)
-                    a.download = video.outputPath.split("/").pop();
-                } else {
-                    a.download = video.originalName;
-                }
+                    if (!res.ok) {
+                        alert("Download failed: " + res.statusText);
+                        return;
+                    }
 
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                window.URL.revokeObjectURL(url);
+                    const data = await res.json();
+
+                    // Open pre-signed URL in new tab (S3 will handle the download)
+                    window.open(data.downloadUrl, '_blank');
+
+                } catch (error) {
+                    console.error('Download error:', error);
+                    alert("Download failed: " + error.message);
+                }
             };
             li.appendChild(downloadBtn);
 
@@ -156,10 +162,26 @@ async function fetchVideos() {
             fetchRelatedVideos(video.originalName, relatedDiv);
         }
 
+        // Show status for processing videos
+        if (video.status === "processing") {
+            const statusSpan = document.createElement("span");
+            statusSpan.textContent = " (Processing...)";
+            statusSpan.className = "processing-status";
+            li.appendChild(statusSpan);
+        }
+
+        // Show error status
+        if (video.status === "error") {
+            const errorSpan = document.createElement("span");
+            errorSpan.textContent = " (Error occurred)";
+            errorSpan.className = "error-status";
+            errorSpan.style.color = "red";
+            li.appendChild(errorSpan);
+        }
+
         list.appendChild(li);
     });
 }
-
 
 // Transcode video
 async function transcodeVideo(id, format) {
@@ -178,15 +200,9 @@ async function transcodeVideo(id, format) {
             throw new Error(errorData.error || 'Transcoding request failed');
         }
 
-        // Get the video list item element to update its status
-        const videoItem = document.querySelector(`li:has(button[onclick*="${id}"])`);
-        const statusElement = videoItem ? videoItem.querySelector('.status') || document.createElement('span') : null;
-        if (statusElement && !statusElement.classList.contains('status')) {
-            statusElement.className = 'status';
-            videoItem.appendChild(statusElement);
-        }
+        alert('Transcoding started! The video will be processed in the background.');
 
-        // Function to poll for status updates
+        // Start polling for status updates
         const checkStatus = async () => {
             try {
                 const statusRes = await fetch(`/videos/${id}/status`, {
@@ -197,31 +213,25 @@ async function transcodeVideo(id, format) {
 
                 const statusData = await statusRes.json();
 
-                // Update the UI with the current status
-                if (statusElement) {
-                    statusElement.textContent = `Status: ${statusData.status}`;
-                }
-
                 // Handle different status outcomes
                 if (statusData.status === 'completed') {
                     alert('Transcoding finished successfully!');
                     fetchVideos(); // Refresh the entire list
                 } else if (statusData.status === 'error') {
                     alert('Transcoding failed. Please try again.');
+                    fetchVideos(); // Refresh to show error status
                 } else if (statusData.status === 'processing') {
-                    // If still processing, check again in 3 seconds
-                    setTimeout(checkStatus, 3000);
+                    // If still processing, check again in 5 seconds
+                    setTimeout(checkStatus, 5000);
                 }
             } catch (error) {
                 console.error("Status check error:", error);
-                if (statusElement) {
-                    statusElement.textContent = 'Status: check failed';
-                }
+                // Stop polling on error, but don't alert - video might still be processing
             }
         };
 
-        // Start pollinåçg
-        checkStatus();
+        // Start polling after a short delay
+        setTimeout(checkStatus, 3000);
 
     } catch (error) {
         console.error("Transcoding error:", error);
