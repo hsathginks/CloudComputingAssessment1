@@ -53,13 +53,11 @@ function authMiddleware(req, res, next) {
 }
 
 // MariaDB setup
-const {
-    DB_HOST = process.env.DB_HOST, // Private IP of database EC2
-    DB_PORT = 3306,
-    DB_NAME = 'videodb',
-    DB_USER = 'appuser',
-    DB_PASSWORD = 'apppassword'
-} = process.env;
+const DB_HOST = process.env.DB_HOST || '172.31.117.182';
+const DB_PORT = process.env.DB_PORT || 3306;
+const DB_NAME = process.env.DB_NAME || 'videodb';
+const DB_USER = process.env.DB_USER || 'appuser';
+const DB_PASSWORD = process.env.DB_PASSWORD || 'apppassword';
 
 let pool;
 

@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   app:
     build: .
@@ -6,7 +8,11 @@ services:
       - "80:3000"
     environment:
       - AWS_REGION=ap-southeast-2
-      - DB_HOST=${DB_HOST}  # Private IP of database EC2
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
       - JWT_SECRET=${JWT_SECRET}
       - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
@@ -15,6 +21,6 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1500M    # Leave 500MB for system
+          memory: 1500M
         reservations:
           memory: 512M
