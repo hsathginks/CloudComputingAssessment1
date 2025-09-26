@@ -2,45 +2,88 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Video App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Transcoder App</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<h1>Video Management App</h1>
+<header>
+    <h1>Video Transcoder App</h1>
+    <div id="userInfo" class="user-info"></div>
+</header>
 
 <!-- Navigation -->
 <nav>
-    <button onclick="showPage('loginPage')">Login</button>
-    <button onclick="showPage('uploadPage')">Upload</button>
-    <button onclick="showPage('videosPage')">My Videos</button>
+    <button onclick="navigateTo('loginPage')">Login</button>
+    <button onclick="navigateTo('registerPage')">Register</button>
+    <button onclick="navigateTo('uploadPage')">Upload</button>
+    <button onclick="navigateTo('videosPage')">My Videos</button>
+    <button onclick="logout()" style="float: right;">Logout</button>
 </nav>
 
 <!-- Login Page -->
 <section id="loginPage" class="page">
-    <h2>Login</h2>
-    <form id="loginForm">
-        <input type="text" id="username" placeholder="Username" required><br>
-        <input type="password" id="password" placeholder="Password" required><br>
-        <button type="submit">Login</button>
-    </form>
-    <p id="loginMessage"></p>
+    <div class="form-container">
+        <h2>Login</h2>
+        <form id="loginForm">
+            <input type="text" id="username" placeholder="Username" required>
+            <input type="password" id="password" placeholder="Password" required>
+            <button type="submit">Login</button>
+        </form>
+        <p id="loginMessage"></p>
+        <p>Don't have an account? <button onclick="navigateTo('registerPage')" class="link-button">Register here</button></p>
+    </div>
+</section>
+
+<!-- Registration Page -->
+<section id="registerPage" class="page" style="display: none;">
+    <div class="form-container">
+        <h2>Register</h2>
+        <form id="registerForm">
+            <input type="text" id="regUsername" placeholder="Username" required>
+            <input type="email" id="regEmail" placeholder="Email" required>
+            <input type="password" id="regPassword" placeholder="Password" required>
+            <button type="submit">Register</button>
+        </form>
+        <p id="registerMessage"></p>
+        <button onclick="navigateTo('loginPage')">Back to Login</button>
+    </div>
+</section>
+
+<!-- Email Confirmation Page -->
+<section id="confirmPage" class="page" style="display: none;">
+    <div class="form-container">
+        <h2>Confirm Email</h2>
+        <p>Please enter the confirmation code sent to your email:</p>
+        <form id="confirmForm">
+            <input type="text" id="confirmUsername" placeholder="Username" required>
+            <input type="text" id="confirmationCode" placeholder="Confirmation Code" required>
+            <button type="submit">Confirm</button>
+        </form>
+        <p id="confirmMessage"></p>
+        <button onclick="navigateTo('loginPage')">Back to Login</button>
+    </div>
 </section>
 
 <!-- Upload Page -->
 <section id="uploadPage" class="page" style="display:none;">
-    <h2>Upload Video</h2>
-    <form id="uploadForm" enctype="multipart/form-data">
-        <input type="file" id="videoFile" name="video" accept="video/*" required><br>
-        <button type="submit">Upload</button>
-    </form>
-    <p id="uploadMessage"></p>
+    <div class="form-container">
+        <h2>Upload Video</h2>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <input type="file" id="videoFile" name="video" accept="video/*" required>
+            <button type="submit">Upload</button>
+        </form>
+        <p id="uploadMessage"></p>
+    </div>
 </section>
 
 <!-- Videos Page -->
 <section id="videosPage" class="page" style="display:none;">
-    <h2>My Videos</h2>
-    <button onclick="fetchVideos()">Refresh List</button>
-    <ul id="videoList"></ul>
+    <div class="content-container">
+        <h2>My Videos</h2>
+        <button onclick="fetchVideos()">Refresh List</button>
+        <ul id="videoList" class="video-list"></ul>
+    </div>
 </section>
 
 <script src="app.js"></script>

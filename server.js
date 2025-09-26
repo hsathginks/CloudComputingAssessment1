@@ -13,17 +13,92 @@ import fs from 'fs';
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { SSMClient, GetParametersCommand } from "@aws-sdk/client-ssm";
+import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import {
+    CognitoIdentityProviderClient,
+    SignUpCommand,
+    ConfirmSignUpCommand,
+    InitiateAuthCommand,
+    AdminListGroupsForUserCommand
+} from "@aws-sdk/client-cognito-identity-provider";
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// AWS S3 setup
-const s3Client = new S3Client({
-    region: process.env.AWS_REGION || 'ap-southeast-2'
-});
-const BUCKET_NAME = process.env.S3_BUCKET_NAME;
+// AWS clients
+const ssmClient = new SSMClient({ region: process.env.AWS_REGION || 'ap-southeast-2' });
+const secretsClient = new SecretsManagerClient({ region: process.env.AWS_REGION || 'ap-southeast-2' });
+const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION || 'ap-southeast-2' });
+const s3Client = new S3Client({ region: process.env.AWS_REGION || 'ap-southeast-2' });
+
+// Global configuration object
+let CONFIG = {};
+
+// Function to get parameters from Parameter Store
+async function getParameters() {
+    try {
+        const command = new GetParametersCommand({
+            Names: [
+                '/myapp/database-host',
+                '/myapp/s3-bucket',
+                '/myapp/youtube-api-key',
+                '/myapp/cognito-user-pool-id',
+                '/myapp/cognito-client-id'
+            ]
+        });
+
+        const response = await ssmClient.send(command);
+        const params = {};
+
+        response.Parameters.forEach(param => {
+            const key = param.Name.split('/').pop();
+            params[key] = param.Value;
+        });
+
+        return params;
+    } catch (error) {
+        console.error('Error getting parameters:', error);
+        return {};
+    }
+}
+
+// Function to get secret from Secrets Manager
+async function getSecret(secretName) {
+    try {
+        const command = new GetSecretValueCommand({
+            SecretId: secretName
+        });
+
+        const response = await secretsClient.send(command);
+        return JSON.parse(response.SecretString);
+    } catch (error) {
+        console.error(`Error getting secret ${secretName}:`, error);
+        return null;
+    }
+}
+
+// Load all configuration
+async function loadConfiguration() {
+    const params = await getParameters();
+    const dbCredentials = await getSecret('n11302836/database-credentials');
+    const jwtSecret = await getSecret('n11302836/jwt-secret');
+
+    CONFIG = {
+        DB_HOST: params['database-host'] || process.env.DB_HOST,
+        DB_PASSWORD: dbCredentials?.password || process.env.DB_PASSWORD || 'apppassword',
+        S3_BUCKET_NAME: params['s3-bucket'] || process.env.S3_BUCKET_NAME,
+        YOUTUBE_API_KEY: params['youtube-api-key'] || process.env.YOUTUBE_API_KEY,
+        JWT_SECRET: jwtSecret?.['jwt-secret'] || process.env.JWT_SECRET || 'mysecret',
+        COGNITO_USER_POOL_ID: params['cognito-user-pool-id'] || process.env.COGNITO_USER_POOL_ID,
+        COGNITO_CLIENT_ID: params['cognito-client-id'] || process.env.COGNITO_CLIENT_ID
+    };
+
+    console.log('Configuration loaded successfully');
+    return CONFIG;
+}
 
 // Temporary directory for processing
 const tempDir = path.join(__dirname, 'temp');
@@ -34,31 +109,29 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '200mb' }));
 app.use(fileUpload());
 
-const JWT_SECRET = process.env.JWT_SECRET || 'mysecret';
-
-// Hardcoded users
-const users = [
-    { username: 'admin', password: 'pass', role: 'admin' },
-    { username: 'user1', password: 'pass', role: 'user' }
-];
-
+// Auth middleware for Cognito JWTs
 function authMiddleware(req, res, next) {
     const token = req.headers["authorization"]?.split(" ")[1];
     if (!token) return res.sendStatus(401);
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) return res.sendStatus(403);
-        req.user = user;
+
+    try {
+        const decoded = jwt.decode(token);
+
+        if (!decoded || decoded.exp < Date.now() / 1000) {
+            return res.sendStatus(403);
+        }
+
+        req.user = {
+            username: decoded['cognito:username'],
+            email: decoded.email,
+        };
         next();
-    });
+    } catch (err) {
+        return res.sendStatus(403);
+    }
 }
 
-// MariaDB setup
-const DB_HOST = process.env.DB_HOST || '172.31.117.182';
-const DB_PORT = process.env.DB_PORT || 3306;
-const DB_NAME = process.env.DB_NAME || 'videodb';
-const DB_USER = process.env.DB_USER || 'appuser';
-const DB_PASSWORD = process.env.DB_PASSWORD || 'apppassword';
-
+// Database setup
 let pool;
 
 async function initDb() {
@@ -66,11 +139,11 @@ async function initDb() {
     while (!connected) {
         try {
             pool = await mysql.createPool({
-                host: DB_HOST,
-                port: Number(DB_PORT),
-                user: DB_USER,
-                password: DB_PASSWORD,
-                database: DB_NAME,
+                host: CONFIG.DB_HOST,
+                port: 3306,
+                user: 'appuser',
+                password: CONFIG.DB_PASSWORD,
+                database: 'videodb',
                 waitForConnections: true,
                 connectionLimit: 10,
                 queueLimit: 0,
@@ -80,7 +153,6 @@ async function initDb() {
             connected = true;
             console.log("Connected to MariaDB");
 
-            // Update table to include S3 keys instead of file paths
             await pool.execute(`
                 CREATE TABLE IF NOT EXISTS videos (
                     id VARCHAR(64) PRIMARY KEY,
@@ -117,7 +189,7 @@ const dbRun = async (sql, params=[]) => {
 // S3 helper functions
 async function uploadToS3(buffer, key, contentType) {
     const command = new PutObjectCommand({
-        Bucket: BUCKET_NAME,
+        Bucket: CONFIG.S3_BUCKET_NAME,
         Key: key,
         Body: buffer,
         ContentType: contentType
@@ -128,7 +200,7 @@ async function uploadToS3(buffer, key, contentType) {
 
 async function downloadFromS3(key, localPath) {
     const command = new GetObjectCommand({
-        Bucket: BUCKET_NAME,
+        Bucket: CONFIG.S3_BUCKET_NAME,
         Key: key
     });
     const response = await s3Client.send(command);
@@ -142,46 +214,128 @@ async function downloadFromS3(key, localPath) {
 
 async function getS3SignedUrl(key, expiresIn = 3600) {
     const command = new GetObjectCommand({
-        Bucket: BUCKET_NAME,
+        Bucket: CONFIG.S3_BUCKET_NAME,
         Key: key
     });
     return await getSignedUrl(s3Client, command, { expiresIn });
 }
 
-// Start server
-initDb().then(() => {
-    app.listen(3000, () => console.log("App listening on port 3000"));
-});
+// Helper function to get user's groups
+async function getUserGroups(username) {
+    try {
+        const command = new AdminListGroupsForUserCommand({
+            UserPoolId: CONFIG.COGNITO_USER_POOL_ID,
+            Username: username,
+        });
 
-// External API
-const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
-
-async function fetchRelatedYouTubeVideos(query) {
-    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q=${encodeURIComponent(query)}&maxResults=3&key=${YOUTUBE_API_KEY}`;
-    const resp = await fetch(url);
-    if (!resp.ok) {
-        console.error("YouTube API error:", await resp.text());
+        const response = await cognitoClient.send(command);
+        return response.Groups.map(group => group.GroupName);
+    } catch (error) {
+        console.error('Error getting user groups:', error);
         return [];
     }
-    const data = await resp.json();
-    return data.items.map(item => ({
-        title: item.snippet.title,
-        thumbnail: item.snippet.thumbnails?.default?.url,
-        link: `https://www.youtube.com/watch?v=${item.id.videoId}`
-    }));
+}
+
+// YouTube API function
+async function fetchRelatedYouTubeVideos(query) {
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q=${encodeURIComponent(query)}&maxResults=3&key=${CONFIG.YOUTUBE_API_KEY}`;
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            console.error("YouTube API error:", await resp.text());
+            return [];
+        }
+        const data = await resp.json();
+        return data.items.map(item => ({
+            title: item.snippet.title,
+            thumbnail: item.snippet.thumbnails?.default?.url,
+            link: `https://www.youtube.com/watch?v=${item.id.videoId}`
+        }));
+    } catch (error) {
+        console.error("YouTube API error:", error);
+        return [];
+    }
 }
 
 // Routes
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
     const { username, password } = req.body;
-    const user = users.find(u => u.username === username && u.password === password);
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
-    const token = jwt.sign({ username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '1h' });
-    res.json({ token });
+    try {
+        const command = new InitiateAuthCommand({
+            AuthFlow: 'USER_PASSWORD_AUTH',
+            ClientId: CONFIG.COGNITO_CLIENT_ID,
+            AuthParameters: {
+                USERNAME: username,
+                PASSWORD: password,
+            },
+        });
+
+        const response = await cognitoClient.send(command);
+
+        if (response.AuthenticationResult) {
+            const idToken = response.AuthenticationResult.IdToken;
+            const decoded = jwt.decode(idToken);
+            const groups = await getUserGroups(username);
+            const role = groups.includes('admin') ? 'admin' : 'user';
+
+            res.json({
+                token: idToken,
+                username: decoded['cognito:username'],
+                email: decoded.email,
+                role: role
+            });
+        } else {
+            res.status(401).json({ error: 'Authentication failed' });
+        }
+    } catch (error) {
+        console.error('Cognito login error:', error);
+        res.status(401).json({ error: 'Invalid credentials' });
+    }
 });
 
-// upload route
+app.post('/register', async (req, res) => {
+    const { username, password, email } = req.body;
+
+    try {
+        const command = new SignUpCommand({
+            ClientId: CONFIG.COGNITO_CLIENT_ID,
+            Username: username,
+            Password: password,
+            UserAttributes: [
+                {
+                    Name: 'email',
+                    Value: email,
+                },
+            ],
+        });
+
+        await cognitoClient.send(command);
+        res.json({ message: 'User registered. Please check email for confirmation code.' });
+    } catch (error) {
+        console.error('Registration error:', error);
+        res.status(400).json({ error: 'Registration failed: ' + error.message });
+    }
+});
+
+app.post('/confirm', async (req, res) => {
+    const { username, confirmationCode } = req.body;
+
+    try {
+        const command = new ConfirmSignUpCommand({
+            ClientId: CONFIG.COGNITO_CLIENT_ID,
+            Username: username,
+            ConfirmationCode: confirmationCode,
+        });
+
+        await cognitoClient.send(command);
+        res.json({ message: 'Email confirmed successfully' });
+    } catch (error) {
+        console.error('Confirmation error:', error);
+        res.status(400).json({ error: 'Confirmation failed: ' + error.message });
+    }
+});
+
 app.post('/upload', authMiddleware, async (req, res) => {
     if (!req.files || !req.files.video) return res.status(400).json({ error: 'No file uploaded' });
 
@@ -207,7 +361,6 @@ app.post('/upload', authMiddleware, async (req, res) => {
     }
 });
 
-// transcode route
 app.post("/transcode", authMiddleware, async (req, res) => {
     const { id, format } = req.body;
     try {
@@ -217,7 +370,6 @@ app.post("/transcode", authMiddleware, async (req, res) => {
         await dbRun(`UPDATE videos SET status = ? WHERE id = ?`, ['processing', id]);
         res.json({ message: "Transcoding started" });
 
-        // Download from S3 to temp location
         const tempInputPath = path.join(tempDir, `input_${id}`);
         console.log(`Downloading ${video.s3InputKey} from S3...`);
         await downloadFromS3(video.s3InputKey, tempInputPath);
@@ -251,7 +403,6 @@ app.post("/transcode", authMiddleware, async (req, res) => {
                         ["completed", s3OutputKey, format, id]
                     );
 
-                    // Cleanup temp files
                     fs.unlinkSync(tempInputPath);
                     fs.unlinkSync(tempOutputPath);
                     console.log(`Transcoding completed: ${outputName}`);
@@ -263,7 +414,6 @@ app.post("/transcode", authMiddleware, async (req, res) => {
             .on("error", async (err) => {
                 console.error("Transcoding error:", err);
                 await dbRun(`UPDATE videos SET status = ? WHERE id = ?`, ['error', id]);
-                // Cleanup temp files
                 if (fs.existsSync(tempInputPath)) fs.unlinkSync(tempInputPath);
                 if (fs.existsSync(tempOutputPath)) fs.unlinkSync(tempOutputPath);
             })
@@ -310,14 +460,13 @@ app.get('/videos/:id', authMiddleware, async (req, res) => {
     });
 });
 
-// download route
 app.get('/download/:id', authMiddleware, async (req, res) => {
     try {
         const video = await dbGet(`SELECT * FROM videos WHERE id = ? AND owner = ?`, [req.params.id, req.user.username]);
         if (!video) return res.status(404).json({ error: 'Video not found' });
 
         const s3Key = video.status === "completed" ? video.s3OutputKey : video.s3InputKey;
-        const signedUrl = await getS3SignedUrl(s3Key, 300); // 5 minutes
+        const signedUrl = await getS3SignedUrl(s3Key, 300);
 
         res.json({ downloadUrl: signedUrl });
     } catch (error) {
@@ -331,7 +480,7 @@ app.get("/youtube", authMiddleware, async (req, res) => {
     if (!query) return res.status(400).json({ error: "No query provided" });
 
     try {
-        const response = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}&maxResults=5&type=video`);
+        const response = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&key=${CONFIG.YOUTUBE_API_KEY}&maxResults=5&type=video`);
         const data = await response.json();
         res.json(data);
     } catch (err) {
@@ -339,3 +488,12 @@ app.get("/youtube", authMiddleware, async (req, res) => {
         res.status(500).json({ error: "Failed to fetch from YouTube" });
     }
 });
+
+// Initialize app
+async function initApp() {
+    await loadConfiguration();
+    await initDb();
+    app.listen(3000, () => console.log("App listening on port 3000"));
+}
+
+initApp();
