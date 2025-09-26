@@ -1,428 +1,299 @@
 let token = null;
-let currentUser = null;
 
 function showPage(pageId) {
-    document.querySelectorAll(".page").forEach(p => p.style.display = "none");
-    document.getElementById(pageId).style.display = "block";
+    document.querySelectorAll('.page').forEach(page => {
+        page.classList.remove('active');
+    });
+    document.getElementById(pageId).classList.add('active');
 }
 
-// Navigation function
-function navigateTo(pageId) {
-    if (pageId === 'uploadPage' || pageId === 'videosPage') {
-        if (!token) {
-            showPage('loginPage');
-            return;
-        }
-    }
-    showPage(pageId);
-
-    if (pageId === 'videosPage') {
-        fetchVideos();
-    }
+// Registration flow
+function showRegister() {
+    showPage('registerPage');
 }
 
-// cognito registration functionality
-function showRegisterForm() {
-    document.getElementById("loginPage").style.display = "none";
-    document.getElementById("registerPage").style.display = "block";
+function showConfirm() {
+    showPage('confirmPage');
+    document.getElementById('confirmUsername').value = sessionStorage.getItem('pendingUsername') || '';
 }
 
-function showLoginForm() {
-    document.getElementById("registerPage").style.display = "none";
-    document.getElementById("confirmPage").style.display = "none";
-    document.getElementById("loginPage").style.display = "block";
-}
-
-function showConfirmForm() {
-    document.getElementById("registerPage").style.display = "none";
-    document.getElementById("confirmPage").style.display = "block";
-    // Pre-fill username
-    document.getElementById("confirmUsername").value = sessionStorage.getItem('pendingUsername') || '';
-}
-
-// Handle registration
-document.getElementById("registerForm").addEventListener("submit", async (e) => {
+// Register
+document.getElementById('registerForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById("regUsername").value;
-    const password = document.getElementById("regPassword").value;
-    const email = document.getElementById("regEmail").value;
+    const username = document.getElementById('regUsername').value;
+    const password = document.getElementById('regPassword').value;
+    const email = document.getElementById('regEmail').value;
 
     try {
-        const res = await fetch("/register", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+        const res = await fetch('/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password, email })
         });
 
         const data = await res.json();
         if (res.ok) {
-            document.getElementById("registerMessage").textContent = data.message;
-            // Store username for confirmation step
+            document.getElementById('registerMessage').textContent = data.message;
             sessionStorage.setItem('pendingUsername', username);
-            showConfirmForm();
+            showConfirm();
         } else {
-            document.getElementById("registerMessage").textContent = data.error;
+            document.getElementById('registerMessage').textContent = data.error;
         }
     } catch (error) {
-        document.getElementById("registerMessage").textContent = "Registration failed: " + error.message;
+        document.getElementById('registerMessage').textContent = 'Registration failed';
     }
 });
 
-// Handle email confirmation
-document.getElementById("confirmForm").addEventListener("submit", async (e) => {
+// Confirm email
+document.getElementById('confirmForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById("confirmUsername").value;
-    const confirmationCode = document.getElementById("confirmationCode").value;
+    const username = document.getElementById('confirmUsername').value;
+    const code = document.getElementById('confirmationCode').value;
 
     try {
-        const res = await fetch("/confirm", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username, confirmationCode })
+        const res = await fetch('/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, confirmationCode: code })
         });
 
         const data = await res.json();
         if (res.ok) {
-            document.getElementById("confirmMessage").textContent = data.message + " You can now log in.";
-            sessionStorage.removeItem('pendingUsername');
-            setTimeout(() => showLoginForm(), 2000);
+            document.getElementById('confirmMessage').textContent = data.message;
+            setTimeout(() => showPage('loginPage'), 2000);
         } else {
-            document.getElementById("confirmMessage").textContent = data.error;
+            document.getElementById('confirmMessage').textContent = data.error;
         }
     } catch (error) {
-        document.getElementById("confirmMessage").textContent = "Confirmation failed: " + error.message;
+        document.getElementById('confirmMessage').textContent = 'Confirmation failed';
     }
 });
 
-// Handle login
-document.getElementById("loginForm").addEventListener("submit", async (e) => {
+// Login
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById("username").value;
-    const password = document.getElementById("password").value;
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
 
     try {
-        const res = await fetch("/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+        const res = await fetch('/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password })
         });
 
         const data = await res.json();
         if (res.ok) {
             token = data.token;
-            currentUser = {
-                username: data.username,
-                email: data.email,
-                role: data.role
-            };
-            document.getElementById("loginMessage").textContent = "Login successful!";
-            document.getElementById("userInfo").textContent = `Welcome, ${data.username} (${data.role})`;
-            showPage("uploadPage");
+            document.getElementById('loginMessage').textContent = 'Login successful!';
+            showPage('uploadPage');
         } else {
-            document.getElementById("loginMessage").textContent = data.error || "Login failed";
+            document.getElementById('loginMessage').textContent = data.error;
         }
     } catch (error) {
-        document.getElementById("loginMessage").textContent = "Login failed: " + error.message;
+        document.getElementById('loginMessage').textContent = 'Login failed';
     }
 });
 
-// Handle logout
-function logout() {
-    token = null;
-    currentUser = null;
-    document.getElementById("userInfo").textContent = "";
-    showPage("loginPage");
-}
-
-// Handle upload
-document.getElementById("uploadForm").addEventListener("submit", async (e) => {
+// Upload
+document.getElementById('uploadForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const file = document.getElementById("videoFile").files[0];
+    const file = document.getElementById('videoFile').files[0];
     if (!file) return;
 
-    // Show upload progress
-    document.getElementById("uploadMessage").textContent = "Uploading to S3...";
+    document.getElementById('uploadMessage').textContent = 'Uploading...';
 
     const formData = new FormData();
-    formData.append("video", file);
+    formData.append('video', file);
 
     try {
-        const res = await fetch("/upload", {
-            method: "POST",
-            headers: { "Authorization": `Bearer ${token}` },
+        const res = await fetch('/upload', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
             body: formData
         });
 
         const data = await res.json();
         if (res.ok) {
-            document.getElementById("uploadMessage").textContent = "Upload successful! File stored in S3. Video ID: " + data.id;
-            document.getElementById("uploadForm").reset();
+            document.getElementById('uploadMessage').textContent = 'Uploaded! Video ID: ' + data.id;
+            document.getElementById('uploadForm').reset();
         } else {
-            document.getElementById("uploadMessage").textContent = data.error || "Upload failed";
+            document.getElementById('uploadMessage').textContent = data.error;
         }
     } catch (error) {
-        document.getElementById("uploadMessage").textContent = "Upload failed: " + error.message;
+        document.getElementById('uploadMessage').textContent = 'Upload failed';
     }
 });
 
-// Fetch videos and render list
+// Fetch videos
 async function fetchVideos() {
+    if (!token) {
+        showPage('loginPage');
+        return;
+    }
+
     try {
-        const res = await fetch("/videos", {
-            headers: { "Authorization": `Bearer ${token}` }
+        const res = await fetch('/videos', {
+            headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        const list = document.getElementById("videoList");
-        list.innerHTML = "";
-
-        if (!res.ok) {
-            list.innerHTML = "<li>Error loading videos</li>";
-            return;
-        }
-
         const videos = await res.json();
-
-        if (videos.length === 0) {
-            list.innerHTML = "<li>No videos found</li>";
-            return;
-        }
+        const list = document.getElementById('videoList');
+        list.innerHTML = '';
 
         videos.forEach(video => {
-            const li = document.createElement("li");
-            li.className = "video-item";
-
-            // Video info
-            const infoDiv = document.createElement("div");
-            infoDiv.className = "video-info";
-            infoDiv.innerHTML = `
-                <strong>${video.originalName}</strong><br>
-                Status: <span class="status-${video.status}">${video.status}</span><br>
-                Format: ${video.format || 'Original'}<br>
-                Created: ${new Date(video.createdAt).toLocaleString()}
+            const li = document.createElement('li');
+            li.innerHTML = `
+                <strong>${video.originalName}</strong>
+                <span class="status-${video.status}">(${video.status})</span>
+                <br>
+                <small>Uploaded: ${new Date(video.createdAt).toLocaleString()}</small>
             `;
-            li.appendChild(infoDiv);
 
-            // Actions based on status
-            const actionsDiv = document.createElement("div");
-            actionsDiv.className = "video-actions";
-
-            if (video.status === "uploaded") {
-                // Transcode button
-                const btn = document.createElement("button");
-                btn.textContent = "Transcode to";
-                btn.onclick = () => transcodeVideo(video.id, select.value);
-
-                // Create format selector
-                const select = document.createElement("select");
-                ["mp4", "avi", "mov"].forEach(f => {
-                    const option = document.createElement("option");
-                    option.value = f;
-                    option.textContent = f.toUpperCase();
+            if (video.status === 'uploaded') {
+                const select = document.createElement('select');
+                ['mp4', 'avi', 'mov'].forEach(format => {
+                    const option = document.createElement('option');
+                    option.value = format;
+                    option.textContent = format.toUpperCase();
                     select.appendChild(option);
                 });
 
-                actionsDiv.appendChild(btn);
-                actionsDiv.appendChild(select);
+                const btn = document.createElement('button');
+                btn.textContent = 'Transcode';
+                btn.onclick = () => transcodeVideo(video.id, select.value);
+
+                li.appendChild(select);
+                li.appendChild(btn);
             }
 
-            if (video.status === "completed") {
-                const downloadBtn = document.createElement("button");
-                downloadBtn.textContent = "Download";
-                downloadBtn.onclick = async () => {
-                    try {
-                        const res = await fetch(`/download/${video.id}`, {
-                            headers: { "Authorization": `Bearer ${token}` }
-                        });
+            if (video.status === 'completed') {
+                const downloadBtn = document.createElement('button');
+                downloadBtn.textContent = 'Download';
+                downloadBtn.onclick = () => downloadVideo(video.id);
+                li.appendChild(downloadBtn);
 
-                        if (!res.ok) {
-                            alert("Download failed: " + res.statusText);
-                            return;
-                        }
-
-                        const data = await res.json();
-                        window.open(data.downloadUrl, '_blank');
-                    } catch (error) {
-                        console.error('Download error:', error);
-                        alert("Download failed: " + error.message);
-                    }
-                };
-                actionsDiv.appendChild(downloadBtn);
-
-                // View details button
-                const detailsBtn = document.createElement("button");
-                detailsBtn.textContent = "View Details";
+                const detailsBtn = document.createElement('button');
+                detailsBtn.textContent = 'View Details';
                 detailsBtn.onclick = () => showVideoDetails(video.id);
-                actionsDiv.appendChild(detailsBtn);
+                li.appendChild(detailsBtn);
             }
 
-            if (video.status === "processing") {
-                const statusSpan = document.createElement("span");
-                statusSpan.textContent = "Processing...";
-                statusSpan.className = "processing-status";
-                actionsDiv.appendChild(statusSpan);
-
-                // Add refresh button for processing videos
-                const refreshBtn = document.createElement("button");
-                refreshBtn.textContent = "Refresh Status";
-                refreshBtn.onclick = () => checkVideoStatus(video.id);
-                actionsDiv.appendChild(refreshBtn);
+            if (video.status === 'processing') {
+                const statusBtn = document.createElement('button');
+                statusBtn.textContent = 'Check Status';
+                statusBtn.onclick = () => checkStatus(video.id);
+                li.appendChild(statusBtn);
             }
 
-            if (video.status === "error") {
-                const errorSpan = document.createElement("span");
-                errorSpan.textContent = "Error occurred";
-                errorSpan.className = "error-status";
-                actionsDiv.appendChild(errorSpan);
-
-                // Retry button for errored videos
-                const retryBtn = document.createElement("button");
-                retryBtn.textContent = "Retry Transcoding";
-                retryBtn.onclick = () => transcodeVideo(video.id, 'mp4');
-                actionsDiv.appendChild(retryBtn);
-            }
-
-            li.appendChild(actionsDiv);
             list.appendChild(li);
         });
     } catch (error) {
-        console.error('Error fetching videos:', error);
-        document.getElementById("videoList").innerHTML = "<li>Error loading videos</li>";
-    }
-}
-
-// Show video details with related videos
-async function showVideoDetails(videoId) {
-    try {
-        const res = await fetch(`/videos/${videoId}`, {
-            headers: { "Authorization": `Bearer ${token}` }
-        });
-
-        if (!res.ok) {
-            alert("Error fetching video details");
-            return;
-        }
-
-        const video = await res.json();
-
-        // Create modal or display in a details section
-        const detailsHtml = `
-            <h3>Video Details: ${video.originalName}</h3>
-            <p><strong>Status:</strong> ${video.status}</p>
-            <p><strong>Format:</strong> ${video.format || 'Original'}</p>
-            <p><strong>Created:</strong> ${new Date(video.createdAt).toLocaleString()}</p>
-            
-            <h4>Related YouTube Videos:</h4>
-            <div id="relatedVideos">
-                ${video.relatedVideos && video.relatedVideos.length > 0
-            ? video.relatedVideos.map(v => `
-                        <div class="related-video">
-                            <a href="${v.link}" target="_blank">${v.title}</a>
-                            <br>
-                            <img src="${v.thumbnail}" alt="${v.title}" style="max-width: 120px;">
-                        </div>
-                    `).join('')
-            : '<p>No related videos found</p>'
-        }
-            </div>
-        `;
-
-        // You might want to create a proper modal here
-        alert(`Video Details:\n${video.originalName}\nStatus: ${video.status}`);
-    } catch (error) {
-        console.error('Error fetching video details:', error);
-    }
-}
-
-// Check status of a specific video
-async function checkVideoStatus(videoId) {
-    try {
-        const res = await fetch(`/videos/${videoId}/status`, {
-            headers: { "Authorization": `Bearer ${token}` }
-        });
-
-        if (!res.ok) throw new Error('Status check failed');
-
-        const statusData = await res.json();
-
-        if (statusData.status === 'completed') {
-            alert('Transcoding finished successfully!');
-            fetchVideos();
-        } else if (statusData.status === 'error') {
-            alert('Transcoding failed. Please try again.');
-            fetchVideos();
-        } else {
-            alert(`Current status: ${statusData.status}`);
-        }
-    } catch (error) {
-        console.error("Status check error:", error);
-        alert('Error checking status');
+        document.getElementById('videoList').innerHTML = '<li>Error loading videos</li>';
     }
 }
 
 // Transcode video
 async function transcodeVideo(id, format) {
     try {
-        const res = await fetch("/transcode", {
-            method: "POST",
+        const res = await fetch('/transcode', {
+            method: 'POST',
             headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${token}`
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify({ id, format })
         });
 
-        if (!res.ok) {
-            const errorData = await res.json();
-            throw new Error(errorData.error || 'Transcoding request failed');
-        }
+        if (res.ok) {
+            alert('Transcoding started!');
+            fetchVideos();
 
-        alert('Transcoding started! The video will be processed in the background.');
-        fetchVideos(); // Refresh the list to show processing status
-
-        // Start polling for status updates
-        const checkStatus = async () => {
-            try {
+            // Check status every 5 seconds
+            const check = setInterval(async () => {
                 const statusRes = await fetch(`/videos/${id}/status`, {
-                    headers: { "Authorization": `Bearer ${token}` }
+                    headers: { 'Authorization': `Bearer ${token}` }
                 });
+                const status = await statusRes.json();
 
-                if (!statusRes.ok) throw new Error('Status check failed');
-                const statusData = await statusRes.json();
-
-                if (statusData.status === 'completed') {
-                    alert('Transcoding finished successfully!');
+                if (status.status === 'completed' || status.status === 'error') {
+                    clearInterval(check);
                     fetchVideos();
-                } else if (statusData.status === 'error') {
-                    alert('Transcoding failed. Please try again.');
-                    fetchVideos();
-                } else if (statusData.status === 'processing') {
-                    setTimeout(checkStatus, 5000);
+                    if (status.status === 'completed') alert('Transcoding completed!');
                 }
-            } catch (error) {
-                console.error("Status check error:", error);
-            }
-        };
-
-        setTimeout(checkStatus, 3000);
-
+            }, 5000);
+        } else {
+            alert('Transcoding failed');
+        }
     } catch (error) {
-        console.error("Transcoding error:", error);
-        alert('Error starting transcoding: ' + error.message);
+        alert('Error starting transcoding');
     }
 }
 
-// Initialize the app
-document.addEventListener('DOMContentLoaded', function() {
-    // Check if user is already logged in (from session storage)
-    const savedToken = sessionStorage.getItem('userToken');
-    const savedUser = sessionStorage.getItem('userInfo');
+// Download video
+async function downloadVideo(id) {
+    try {
+        const res = await fetch(`/download/${id}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
 
-    if (savedToken && savedUser) {
-        token = savedToken;
-        currentUser = JSON.parse(savedUser);
-        document.getElementById("userInfo").textContent = `Welcome, ${currentUser.username} (${currentUser.role})`;
-        showPage("uploadPage");
-    } else {
-        showPage("loginPage");
+        const data = await res.json();
+        if (res.ok) {
+            window.open(data.downloadUrl, '_blank');
+        } else {
+            alert('Download failed');
+        }
+    } catch (error) {
+        alert('Download error');
     }
-});
+}
+
+// Check status
+async function checkStatus(id) {
+    try {
+        const res = await fetch(`/videos/${id}/status`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        const data = await res.json();
+        alert(`Current status: ${data.status}`);
+        if (data.status !== 'processing') {
+            fetchVideos();
+        }
+    } catch (error) {
+        alert('Error checking status');
+    }
+}
+
+// Show video details
+async function showVideoDetails(id) {
+    try {
+        const res = await fetch(`/videos/${id}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        const video = await res.json();
+        let details = `Video: ${video.originalName}\nStatus: ${video.status}\nFormat: ${video.format}\n\nRelated Videos:\n`;
+
+        if (video.relatedVideos && video.relatedVideos.length > 0) {
+            video.relatedVideos.forEach(v => {
+                details += `- ${v.title}\n  ${v.link}\n\n`;
+            });
+        } else {
+            details += 'No related videos found';
+        }
+
+        alert(details);
+    } catch (error) {
+        alert('Error loading details');
+    }
+}
+
+// Logout
+function logout() {
+    token = null;
+    showPage('loginPage');
+}
+
+// Initialize - show login page by default
+showPage('loginPage');
