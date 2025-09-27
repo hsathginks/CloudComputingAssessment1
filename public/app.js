@@ -16,14 +16,16 @@ function showPage(pageId) {
     const adminNav = document.getElementById('adminNav');
     if (adminNav) {
         adminNav.style.display = userRole === 'admin' ? 'inline-block' : 'none';
+        console.log('Admin nav visibility:', adminNav.style.display, 'userRole:', userRole);
     }
 }
 
 // Debug function to check user role
-function checkUserRole() {
-    console.log('Current token:', !!token);
-    console.log('Current userRole:', userRole);
-    alert(`Token: ${!!token ? 'Present' : 'Missing'}\nRole: ${userRole || 'Not set'}`);
+// Debug function to check login response
+function debugLoginResponse(data) {
+    console.log('Login response:', data);
+    console.log('Role received:', data.role);
+    console.log('Token received:', !!data.token);
 }
 
 // Registration flow
@@ -110,7 +112,9 @@ document.getElementById("loginForm").addEventListener("submit", async (e) => {
             showMfaVerification();
         }
         else if (res.ok) {
+            debugLoginResponse(data);
             token = data.token;
+            userRole = data.role;
             document.getElementById("loginMessage").textContent = "Login successful!";
             showPage("uploadPage");
         } else {
@@ -121,7 +125,6 @@ document.getElementById("loginForm").addEventListener("submit", async (e) => {
     }
 });
 
-// Show MFA verification screen
 // Show MFA verification screen
 function showMfaVerification() {
     showPage("mfaPage");
@@ -145,7 +148,9 @@ document.getElementById("mfaForm").addEventListener("submit", async (e) => {
 
     const data = await res.json();
     if (res.ok) {
+        debugLoginResponse(data);
         token = data.token;
+        userRole = data.role;
         showPage("uploadPage");
     } else {
         alert("Invalid code - please check your email and try again");
