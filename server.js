@@ -46,7 +46,8 @@ async function getParameters() {
                 '/myapp/s3-bucket',
                 '/myapp/youtube-api-key',
                 '/myapp/cognito-user-pool-id',
-                '/myapp/cognito-client-id'
+                '/myapp/cognito-client-id',
+                '/myapp/cognito-client-secret'
             ]
         });
 
@@ -93,11 +94,20 @@ async function loadConfiguration() {
         YOUTUBE_API_KEY: params['youtube-api-key'] || process.env.YOUTUBE_API_KEY,
         JWT_SECRET: jwtSecret?.['jwt-secret'] || process.env.JWT_SECRET || 'mysecret',
         COGNITO_USER_POOL_ID: params['cognito-user-pool-id'] || process.env.COGNITO_USER_POOL_ID,
-        COGNITO_CLIENT_ID: params['cognito-client-id'] || process.env.COGNITO_CLIENT_ID
+        COGNITO_CLIENT_ID: params['cognito-client-id'] || process.env.COGNITO_CLIENT_ID,
+        COGNITO_CLIENT_SECRET: params['cognito-client-secret'] || process.env.COGNITO_CLIENT_SECRET
     };
 
     console.log('Configuration loaded successfully');
     return CONFIG;
+}
+
+// secret hash
+function calculateSecretHash(username, clientId, clientSecret) {
+    return crypto
+        .createHmac('SHA256', clientSecret)
+        .update(username + clientId)
+        .digest('base64');
 }
 
 // Temporary directory for processing
@@ -262,12 +272,14 @@ app.post('/login', async (req, res) => {
     const { username, password } = req.body;
 
     try {
+        const secretHash = calculateSecretHash(username, CONFIG.COGNITO_CLIENT_ID, CONFIG.COGNITO_CLIENT_SECRET);
         const command = new InitiateAuthCommand({
             AuthFlow: 'USER_PASSWORD_AUTH',
             ClientId: CONFIG.COGNITO_CLIENT_ID,
             AuthParameters: {
                 USERNAME: username,
                 PASSWORD: password,
+                SECRET_HASH: secretHash,
             },
         });
 
@@ -298,10 +310,12 @@ app.post('/register', async (req, res) => {
     const { username, password, email } = req.body;
 
     try {
+        const secretHash = calculateSecretHash(username, CONFIG.COGNITO_CLIENT_ID, CONFIG.COGNITO_CLIENT_SECRET);
         const command = new SignUpCommand({
             ClientId: CONFIG.COGNITO_CLIENT_ID,
             Username: username,
             Password: password,
+            SecretHash: secretHash,
             UserAttributes: [
                 {
                     Name: 'email',
@@ -322,10 +336,12 @@ app.post('/confirm', async (req, res) => {
     const { username, confirmationCode } = req.body;
 
     try {
+        const secretHash = calculateSecretHash(username, CONFIG.COGNITO_CLIENT_ID, CONFIG.COGNITO_CLIENT_SECRET);
         const command = new ConfirmSignUpCommand({
             ClientId: CONFIG.COGNITO_CLIENT_ID,
             Username: username,
             ConfirmationCode: confirmationCode,
+            secretHash: secretHash,
         });
 
         await cognitoClient.send(command);
