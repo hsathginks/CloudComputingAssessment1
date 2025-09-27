@@ -22,8 +22,10 @@ import {
     SignUpCommand,
     ConfirmSignUpCommand,
     InitiateAuthCommand,
+    RespondToAuthChallengeCommand,
     AdminListGroupsForUserCommand
 } from "@aws-sdk/client-cognito-identity-provider";
+
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 

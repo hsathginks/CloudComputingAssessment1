@@ -106,10 +106,11 @@ document.getElementById("loginForm").addEventListener("submit", async (e) => {
 });
 
 // Show MFA verification screen
+// Show MFA verification screen
 function showMfaVerification() {
-    document.getElementById("loginPage").style.display = "none";
-    document.getElementById("mfaPage").style.display = "block";
+    showPage("mfaPage");
 }
+
 
 // Handle MFA verification
 document.getElementById("mfaForm").addEventListener("submit", async (e) => {
