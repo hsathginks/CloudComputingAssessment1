@@ -1,4 +1,7 @@
 let token = null;
+// Global variables for MFA
+let mfaSession = null;
+let mfaUsername = null;
 
 function showPage(pageId) {
     document.querySelectorAll('.page').forEach(page => {
@@ -70,28 +73,65 @@ document.getElementById('confirmForm').addEventListener('submit', async (e) => {
 });
 
 // Login
-document.getElementById('loginForm').addEventListener('submit', async (e) => {
+document.getElementById("loginForm").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
 
     try {
-        const res = await fetch('/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+        const res = await fetch("/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ username, password })
         });
 
         const data = await res.json();
-        if (res.ok) {
+
+        if (data.mfaRequired) {
+            // Show MFA verification screen
+            mfaSession = data.session;
+            mfaUsername = data.username;
+            showMfaVerification();
+        }
+        else if (res.ok) {
             token = data.token;
-            document.getElementById('loginMessage').textContent = 'Login successful!';
-            showPage('uploadPage');
+            document.getElementById("loginMessage").textContent = "Login successful!";
+            showPage("uploadPage");
         } else {
-            document.getElementById('loginMessage').textContent = data.error;
+            document.getElementById("loginMessage").textContent = data.error || "Login failed";
         }
     } catch (error) {
-        document.getElementById('loginMessage').textContent = 'Login failed';
+        document.getElementById("loginMessage").textContent = "Login failed";
+    }
+});
+
+// Show MFA verification screen
+function showMfaVerification() {
+    document.getElementById("loginPage").style.display = "none";
+    document.getElementById("mfaPage").style.display = "block";
+}
+
+// Handle MFA verification
+document.getElementById("mfaForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const code = document.getElementById("mfaCode").value;
+
+    const res = await fetch("/verify-mfa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            username: mfaUsername,
+            session: mfaSession,
+            code: code
+        })
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+        token = data.token;
+        showPage("uploadPage");
+    } else {
+        alert("Invalid code - please check your email and try again");
     }
 });
 

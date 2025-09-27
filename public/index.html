@@ -25,6 +25,7 @@
     <button onclick="showPage('registerPage')">Register</button>
     <button onclick="showPage('uploadPage')">Upload</button>
     <button onclick="showPage('videosPage')">My Videos</button>
+    <button id="adminNav" onclick="showPage('adminPage')" style="display: none; background: #ff6b6b; color: white;">Admin Panel</button>
     <button onclick="logout()" style="float: right;">Logout</button>
 </div>
 
@@ -33,6 +34,9 @@
 <!-- Login Page -->
 <div id="loginPage" class="page active">
     <h2>Login</h2>
+    <div style="background: #f0f8ff; padding: 10px; border-radius: 5px; margin: 10px 0;">
+        <strong>🔒 Secure Login:</strong> After entering your password, check your email for a verification code.
+    </div>
     <form id="loginForm">
         <input type="text" id="username" placeholder="Username" required><br>
         <input type="password" id="password" placeholder="Password" required><br>
@@ -40,6 +44,20 @@
     </form>
     <p id="loginMessage"></p>
     <button onclick="showPage('registerPage')">Need to register?</button>
+</div>
+
+<!-- MFA login page -->
+<div id="mfaPage" class="page" style="display: none;">
+    <h2>Email Verification</h2>
+    <p>We sent a verification code to your email address.</p>
+    <p>Please check your inbox and enter the code below:</p>
+
+    <form id="mfaForm">
+        <input type="text" id="mfaCode" placeholder="Enter 6-digit code" required>
+        <button type="submit">Verify</button>
+    </form>
+
+    <button onclick="showPage('loginPage')">Back to Login</button>
 </div>
 
 <!-- Registration Page -->
@@ -82,6 +100,25 @@
     <h2>My Videos</h2>
     <button onclick="fetchVideos()">Refresh Videos</button>
     <ul id="videoList"></ul>
+</div>
+
+<!-- Admin Page -->
+<div id="adminPage" class="page">
+    <h2>Admin Panel</h2>
+    <div style="margin: 20px 0;">
+        <button onclick="fetchAdminStats()">Load Statistics</button>
+        <button onclick="fetchAllVideos()">View All Videos</button>
+        <button onclick="fetchAnalyticsSummary()">View Analytics</button>
+    </div>
+
+    <div id="adminStats" style="background: #f5f5f5; padding: 15px; margin: 20px 0; border-radius: 5px;"></div>
+
+    <div id="analyticsSummary" style="background: #e8f4fd; padding: 15px; margin: 20px 0; border-radius: 5px;"></div>
+
+    <div>
+        <h3>All Videos</h3>
+        <ul id="adminVideoList"></ul>
+    </div>
 </div>
 
 <script src="app.js"></script>

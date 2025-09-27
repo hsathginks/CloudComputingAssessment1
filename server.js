@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 dotenv.config();
+import { createHmac } from 'crypto';
 import express from 'express';
 import fileUpload from 'express-fileupload';
 import jwt from 'jsonwebtoken';
@@ -15,6 +16,7 @@ import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { SSMClient, GetParametersCommand } from "@aws-sdk/client-ssm";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import { DynamoDBClient, PutItemCommand, QueryCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
 import {
     CognitoIdentityProviderClient,
     SignUpCommand,
@@ -33,6 +35,7 @@ const ssmClient = new SSMClient({ region: process.env.AWS_REGION || 'ap-southeas
 const secretsClient = new SecretsManagerClient({ region: process.env.AWS_REGION || 'ap-southeast-2' });
 const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION || 'ap-southeast-2' });
 const s3Client = new S3Client({ region: process.env.AWS_REGION || 'ap-southeast-2' });
+const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || 'ap-southeast-2' });
 
 // Global configuration object
 let CONFIG = {};
@@ -48,7 +51,8 @@ async function getParameters() {
                 '/myapp/cognito-user-pool-id',
                 '/myapp/cognito-client-id',
                 '/myapp/cognito-client-secret'
-            ]
+            ],
+            WithDecryption: true // This is needed for SecureString parameters
         });
 
         const response = await ssmClient.send(command);
@@ -56,9 +60,10 @@ async function getParameters() {
 
         response.Parameters.forEach(param => {
             const key = param.Name.split('/').pop();
-            params[key] = param.Value;
+            params[key] = param.Value.trim(); // Add .trim() to remove whitespace/newlines
         });
 
+        console.log('Retrieved parameters:', Object.keys(params));
         return params;
     } catch (error) {
         console.error('Error getting parameters:', error);
@@ -98,16 +103,99 @@ async function loadConfiguration() {
         COGNITO_CLIENT_SECRET: params['cognito-client-secret'] || process.env.COGNITO_CLIENT_SECRET
     };
 
+    console.log('Configuration loaded:');
+    console.log('- COGNITO_CLIENT_ID:', CONFIG.COGNITO_CLIENT_ID);
+    console.log('- COGNITO_CLIENT_SECRET exists:', !!CONFIG.COGNITO_CLIENT_SECRET);
+    console.log('- COGNITO_CLIENT_SECRET starts with:', CONFIG.COGNITO_CLIENT_SECRET ? CONFIG.COGNITO_CLIENT_SECRET.substring(0, 10) + '...' : 'undefined');
     console.log('Configuration loaded successfully');
     return CONFIG;
 }
 
-// secret hash
+// Function to calculate SECRET_HASH for Cognito
 function calculateSecretHash(username, clientId, clientSecret) {
-    return crypto
-        .createHmac('SHA256', clientSecret)
+    console.log('Calculating SECRET_HASH with:');
+    console.log('- Username:', username);
+    console.log('- Client ID:', clientId);
+    console.log('- Client Secret exists:', !!clientSecret);
+    console.log('- Client Secret length:', clientSecret ? clientSecret.length : 0);
+
+    return createHmac('SHA256', clientSecret)
         .update(username + clientId)
         .digest('base64');
+}
+
+// DynamoDB Analytics Functions
+async function logVideoAnalytics(videoId, action, userId, additionalData = {}) {
+    try {
+        const timestamp = Date.now();
+        const command = new PutItemCommand({
+            TableName: 'video-analytics',
+            Item: {
+                video_id: { S: videoId },
+                timestamp: { N: timestamp.toString() },
+                action: { S: action },
+                user_id: { S: userId },
+                date: { S: new Date().toISOString().split('T')[0] }, // YYYY-MM-DD format
+                ...Object.keys(additionalData).reduce((acc, key) => {
+                    acc[key] = { S: additionalData[key].toString() };
+                    return acc;
+                }, {})
+            }
+        });
+
+        await dynamoClient.send(command);
+        console.log(`Analytics logged: ${action} for video ${videoId} by ${userId}`);
+    } catch (error) {
+        console.error('Error logging analytics:', error);
+        // Don't fail the main operation if analytics logging fails
+    }
+}
+
+async function getVideoAnalytics(videoId) {
+    try {
+        const command = new QueryCommand({
+            TableName: 'video-analytics',
+            KeyConditionExpression: 'video_id = :vid',
+            ExpressionAttributeValues: {
+                ':vid': { S: videoId }
+            },
+            ScanIndexForward: false // Most recent first
+        });
+
+        const response = await dynamoClient.send(command);
+        return response.Items?.map(item => ({
+            timestamp: parseInt(item.timestamp.N),
+            action: item.action.S,
+            userId: item.user_id.S,
+            date: item.date.S
+        })) || [];
+    } catch (error) {
+        console.error('Error getting analytics:', error);
+        return [];
+    }
+}
+
+async function getUserAnalytics(userId) {
+    try {
+        const command = new ScanCommand({
+            TableName: 'video-analytics',
+            FilterExpression: 'user_id = :uid',
+            ExpressionAttributeValues: {
+                ':uid': { S: userId }
+            }
+        });
+
+        const response = await dynamoClient.send(command);
+        return response.Items?.map(item => ({
+            videoId: item.video_id.S,
+            timestamp: parseInt(item.timestamp.N),
+            action: item.action.S,
+            date: item.date.S
+        })) || [];
+    } catch (error) {
+        console.error('Error getting user analytics:', error);
+        return [];
+    }
 }
 
 // Temporary directory for processing
@@ -120,7 +208,7 @@ app.use(express.json({ limit: '200mb' }));
 app.use(fileUpload());
 
 // Auth middleware for Cognito JWTs
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
     const token = req.headers["authorization"]?.split(" ")[1];
     if (!token) return res.sendStatus(401);
 
@@ -131,9 +219,14 @@ function authMiddleware(req, res, next) {
             return res.sendStatus(403);
         }
 
+        // Get user's groups from Cognito
+        const groups = await getUserGroups(decoded['cognito:username']);
+
         req.user = {
             username: decoded['cognito:username'],
             email: decoded.email,
+            groups: groups,
+            role: groups.includes('admin') ? 'admin' : 'user'
         };
         next();
     } catch (err) {
@@ -230,6 +323,14 @@ async function getS3SignedUrl(key, expiresIn = 3600) {
     return await getSignedUrl(s3Client, command, { expiresIn });
 }
 
+// Admin-only middleware
+function adminOnly(req, res, next) {
+    if (!req.user || !req.user.groups.includes('admin')) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    next();
+}
+
 // Helper function to get user's groups
 async function getUserGroups(username) {
     try {
@@ -273,6 +374,7 @@ app.post('/login', async (req, res) => {
 
     try {
         const secretHash = calculateSecretHash(username, CONFIG.COGNITO_CLIENT_ID, CONFIG.COGNITO_CLIENT_SECRET);
+
         const command = new InitiateAuthCommand({
             AuthFlow: 'USER_PASSWORD_AUTH',
             ClientId: CONFIG.COGNITO_CLIENT_ID,
@@ -285,7 +387,17 @@ app.post('/login', async (req, res) => {
 
         const response = await cognitoClient.send(command);
 
-        if (response.AuthenticationResult) {
+        // If MFA challenge required
+        if (response.ChallengeName === 'SOFTWARE_TOKEN_MFA') {
+            res.json({
+                mfaRequired: true,
+                session: response.Session,
+                username: username,
+                message: 'Check your email for verification code'
+            });
+        }
+        else if (response.AuthenticationResult) {
+            // if normal mfa isn't triggered (unlikely)
             const idToken = response.AuthenticationResult.IdToken;
             const decoded = jwt.decode(idToken);
             const groups = await getUserGroups(username);
@@ -306,11 +418,48 @@ app.post('/login', async (req, res) => {
     }
 });
 
+// MFA verification endpoint
+app.post('/verify-mfa', async (req, res) => {
+    const { username, session, code } = req.body;
+
+    try {
+        const command = new RespondToAuthChallengeCommand({
+            ChallengeName: 'SOFTWARE_TOKEN_MFA',
+            ClientId: CONFIG.COGNITO_CLIENT_ID,
+            ChallengeResponses: {
+                USERNAME: username,
+                SOFTWARE_TOKEN_MFA_CODE: code
+            },
+            Session: session
+        });
+
+        const response = await cognitoClient.send(command);
+
+        if (response.AuthenticationResult) {
+            const decoded = jwt.decode(response.AuthenticationResult.IdToken);
+            const groups = await getUserGroups(username);
+            const role = groups.includes('admin') ? 'admin' : 'user';
+
+            res.json({
+                token: response.AuthenticationResult.IdToken,
+                username: decoded['cognito:username'],
+                email: decoded.email,
+                role: role
+            });
+        } else {
+            res.status(400).json({ error: 'Invalid verification code' });
+        }
+    } catch (error) {
+        res.status(400).json({ error: 'Verification failed' });
+    }
+});
+
 app.post('/register', async (req, res) => {
     const { username, password, email } = req.body;
 
     try {
         const secretHash = calculateSecretHash(username, CONFIG.COGNITO_CLIENT_ID, CONFIG.COGNITO_CLIENT_SECRET);
+
         const command = new SignUpCommand({
             ClientId: CONFIG.COGNITO_CLIENT_ID,
             Username: username,
@@ -336,18 +485,28 @@ app.post('/confirm', async (req, res) => {
     const { username, confirmationCode } = req.body;
 
     try {
+        console.log('Confirming user:', username);
+        console.log('CONFIG loaded:', !!CONFIG.COGNITO_CLIENT_ID, !!CONFIG.COGNITO_CLIENT_SECRET);
+
+        if (!CONFIG.COGNITO_CLIENT_SECRET) {
+            console.error('CLIENT_SECRET not available in CONFIG');
+            return res.status(500).json({ error: 'Server configuration error' });
+        }
+
         const secretHash = calculateSecretHash(username, CONFIG.COGNITO_CLIENT_ID, CONFIG.COGNITO_CLIENT_SECRET);
+
         const command = new ConfirmSignUpCommand({
             ClientId: CONFIG.COGNITO_CLIENT_ID,
             Username: username,
             ConfirmationCode: confirmationCode,
-            secretHash: secretHash,
+            SecretHash: secretHash,
         });
 
         await cognitoClient.send(command);
         res.json({ message: 'Email confirmed successfully' });
     } catch (error) {
         console.error('Confirmation error:', error);
+        console.error('Full error details:', JSON.stringify(error, null, 2));
         res.status(400).json({ error: 'Confirmation failed: ' + error.message });
     }
 });
@@ -369,6 +528,12 @@ app.post('/upload', authMiddleware, async (req, res) => {
             `INSERT INTO videos (id, owner, originalName, s3InputKey, status, createdAt) VALUES (?, ?, ?, ?, ?, ?)`,
             [id, req.user.username, video.name, s3Key, 'uploaded', createdAt]
         );
+
+        // Log analytics
+        await logVideoAnalytics(id, 'upload', req.user.username, {
+            filename: video.name,
+            filesize: video.size
+        });
 
         res.json({ message: 'File uploaded to S3', id });
     } catch (error) {
@@ -418,6 +583,9 @@ app.post("/transcode", authMiddleware, async (req, res) => {
                         `UPDATE videos SET status = ?, s3OutputKey = ?, format = ? WHERE id = ?`,
                         ["completed", s3OutputKey, format, id]
                     );
+
+                    // Log transcoding completion
+                    await logVideoAnalytics(id, 'transcode_completed', 'system', { format: format });
 
                     fs.unlinkSync(tempInputPath);
                     fs.unlinkSync(tempOutputPath);
@@ -484,6 +652,9 @@ app.get('/download/:id', authMiddleware, async (req, res) => {
         const s3Key = video.status === "completed" ? video.s3OutputKey : video.s3InputKey;
         const signedUrl = await getS3SignedUrl(s3Key, 300);
 
+        // Log download analytics
+        await logVideoAnalytics(req.params.id, 'download', req.user.username);
+
         res.json({ downloadUrl: signedUrl });
     } catch (error) {
         console.error('Download error:', error);
@@ -502,6 +673,134 @@ app.get("/youtube", authMiddleware, async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch from YouTube" });
+    }
+});
+
+// Admin-only routes
+app.get('/admin/all-videos', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        console.log(`Admin ${req.user.username} viewing all videos`);
+        const videos = await dbAll(`
+            SELECT id, owner, originalName, status, format, createdAt
+            FROM videos
+            ORDER BY createdAt DESC
+        `);
+        res.json(videos);
+    } catch (error) {
+        console.error('Error fetching all videos:', error);
+        res.status(500).json({ error: 'Failed to fetch videos' });
+    }
+});
+
+app.get('/admin/users/:username/videos', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { username } = req.params;
+        console.log(`Admin ${req.user.username} viewing videos for user ${username}`);
+        const videos = await dbAll(`SELECT * FROM videos WHERE owner = ?`, [username]);
+        res.json(videos);
+    } catch (error) {
+        console.error('Error fetching user videos:', error);
+        res.status(500).json({ error: 'Failed to fetch user videos' });
+    }
+});
+
+app.delete('/admin/videos/:id', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { id } = req.params;
+        console.log(`Admin ${req.user.username} deleting video ${id}`);
+
+        // Get video info first
+        const video = await dbGet(`SELECT * FROM videos WHERE id = ?`, [id]);
+        if (!video) return res.status(404).json({ error: 'Video not found' });
+
+        // Delete from database
+        await dbRun(`DELETE FROM videos WHERE id = ?`, [id]);
+
+        res.json({ message: 'Video deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting video:', error);
+        res.status(500).json({ error: 'Failed to delete video' });
+    }
+});
+
+app.get('/admin/stats', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const stats = await dbAll(`
+            SELECT 
+                COUNT(*) as total_videos,
+                COUNT(CASE WHEN status = 'uploaded' THEN 1 END) as uploaded,
+                COUNT(CASE WHEN status = 'processing' THEN 1 END) as processing,
+                COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+                COUNT(CASE WHEN status = 'error' THEN 1 END) as error,
+                COUNT(DISTINCT owner) as unique_users
+            FROM videos
+        `);
+        res.json(stats[0]);
+    } catch (error) {
+        console.error('Error fetching stats:', error);
+        res.status(500).json({ error: 'Failed to fetch stats' });
+    }
+});
+
+// Analytics routes
+app.get('/videos/:id/analytics', authMiddleware, async (req, res) => {
+    try {
+        const video = await dbGet(`SELECT * FROM videos WHERE id = ? AND owner = ?`,
+            [req.params.id, req.user.username]);
+
+        if (!video && req.user.role !== 'admin') {
+            return res.status(404).json({ error: 'Video not found' });
+        }
+
+        const analytics = await getVideoAnalytics(req.params.id);
+        res.json(analytics);
+    } catch (error) {
+        console.error('Error fetching video analytics:', error);
+        res.status(500).json({ error: 'Failed to fetch analytics' });
+    }
+});
+
+app.get('/user/analytics', authMiddleware, async (req, res) => {
+    try {
+        const analytics = await getUserAnalytics(req.user.username);
+        res.json(analytics);
+    } catch (error) {
+        console.error('Error fetching user analytics:', error);
+        res.status(500).json({ error: 'Failed to fetch user analytics' });
+    }
+});
+
+app.get('/admin/analytics/summary', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const command = new ScanCommand({
+            TableName: 'video-analytics'
+        });
+
+        const response = await dynamoClient.send(command);
+        const items = response.Items || [];
+
+        // Process analytics data
+        const summary = {
+            totalEvents: items.length,
+            uploads: items.filter(item => item.action.S === 'upload').length,
+            downloads: items.filter(item => item.action.S === 'download').length,
+            transcodes: items.filter(item => item.action.S === 'transcode_completed').length,
+            uniqueUsers: [...new Set(items.map(item => item.user_id.S))].length,
+            recentActivity: items
+                .sort((a, b) => parseInt(b.timestamp.N) - parseInt(a.timestamp.N))
+                .slice(0, 10)
+                .map(item => ({
+                    action: item.action.S,
+                    userId: item.user_id.S,
+                    timestamp: parseInt(item.timestamp.N),
+                    date: new Date(parseInt(item.timestamp.N)).toLocaleString()
+                }))
+        };
+
+        res.json(summary);
+    } catch (error) {
+        console.error('Error fetching analytics summary:', error);
+        res.status(500).json({ error: 'Failed to fetch analytics summary' });
     }
 });
 

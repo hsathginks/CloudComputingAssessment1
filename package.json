@@ -19,6 +19,7 @@
   "homepage": "https://github.com/hsathginks/CloudComputingAssessment1#readme",
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.896.0",
+    "@aws-sdk/client-dynamodb": "^3.896.0",
     "@aws-sdk/client-s3": "^3.894.0",
     "@aws-sdk/client-secrets-manager": "^3.896.0",
     "@aws-sdk/client-ssm": "^3.896.0",
