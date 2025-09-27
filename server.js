@@ -22,8 +22,10 @@ import {
     SignUpCommand,
     ConfirmSignUpCommand,
     InitiateAuthCommand,
+    RespondToAuthChallengeCommand,
     AdminListGroupsForUserCommand
 } from "@aws-sdk/client-cognito-identity-provider";
+
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -258,7 +260,7 @@ async function initDb() {
 
             await pool.execute(`
                 CREATE TABLE IF NOT EXISTS videos (
-                                                      id VARCHAR(64) PRIMARY KEY,
+                    id VARCHAR(64) PRIMARY KEY,
                     owner VARCHAR(255),
                     originalName TEXT,
                     s3InputKey TEXT,
@@ -266,7 +268,7 @@ async function initDb() {
                     status VARCHAR(64),
                     format VARCHAR(32),
                     createdAt DATETIME(3)
-                    )
+                )
             `);
 
         } catch (err) {
@@ -386,16 +388,22 @@ app.post('/login', async (req, res) => {
         });
 
         const response = await cognitoClient.send(command);
-
-        if (response.AuthenticationResult) {
+        console.log("ChallengeName:", response.ChallengeName);
+        // If MFA challenge required
+        if (response.ChallengeName === 'EMAIL_OTP') {
+            res.json({
+                mfaRequired: true,
+                session: response.Session,
+                username: username,
+                message: 'Check your email for verification code'
+            });
+        }
+        else if (response.AuthenticationResult) {
+            // if normal mfa isn't triggered (unlikely)
             const idToken = response.AuthenticationResult.IdToken;
             const decoded = jwt.decode(idToken);
-
-            // Get user's groups for role-based access
             const groups = await getUserGroups(username);
             const role = groups.includes('admin') ? 'admin' : 'user';
-
-            console.log(`User ${username} logged in with role: ${role}, groups: ${groups.join(', ')}`);
 
             res.json({
                 token: idToken,
@@ -409,6 +417,46 @@ app.post('/login', async (req, res) => {
     } catch (error) {
         console.error('Cognito login error:', error);
         res.status(401).json({ error: 'Invalid credentials' });
+    }
+});
+
+// MFA verification endpoint
+app.post('/verify-mfa', async (req, res) => {
+    const { username, session, code } = req.body;
+
+    try {
+        const secretHash = calculateSecretHash(username, CONFIG.COGNITO_CLIENT_ID, CONFIG.COGNITO_CLIENT_SECRET);
+
+        const command = new RespondToAuthChallengeCommand({
+            ChallengeName: 'EMAIL_OTP',
+            ClientId: CONFIG.COGNITO_CLIENT_ID,
+            ChallengeResponses: {
+                USERNAME: username,
+                EMAIL_OTP_CODE: code,
+                SECRET_HASH: secretHash
+            },
+            Session: session
+        });
+
+        const response = await cognitoClient.send(command);
+
+        if (response.AuthenticationResult) {
+            const decoded = jwt.decode(response.AuthenticationResult.IdToken);
+            const groups = await getUserGroups(username);
+            const role = groups.includes('admin') ? 'admin' : 'user';
+
+            res.json({
+                token: response.AuthenticationResult.IdToken,
+                username: decoded['cognito:username'],
+                email: decoded.email,
+                role: role
+            });
+        } else {
+            res.status(400).json({ error: 'Invalid verification code' });
+        }
+    } catch (error) {
+        console.error("MFA verification error:", error);
+        res.status(400).json({ error: error.message || 'Verification failed' });
     }
 });
 
@@ -639,8 +687,8 @@ app.get('/admin/all-videos', authMiddleware, adminOnly, async (req, res) => {
     try {
         console.log(`Admin ${req.user.username} viewing all videos`);
         const videos = await dbAll(`
-            SELECT id, owner, originalName, status, format, createdAt 
-            FROM videos 
+            SELECT id, owner, originalName, status, format, createdAt
+            FROM videos
             ORDER BY createdAt DESC
         `);
         res.json(videos);
