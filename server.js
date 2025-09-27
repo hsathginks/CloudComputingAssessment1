@@ -698,36 +698,36 @@ app.get('/admin/all-videos', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
-app.get('/admin/users/:username/videos', authMiddleware, adminOnly, async (req, res) => {
-    try {
-        const { username } = req.params;
-        console.log(`Admin ${req.user.username} viewing videos for user ${username}`);
-        const videos = await dbAll(`SELECT * FROM videos WHERE owner = ?`, [username]);
-        res.json(videos);
-    } catch (error) {
-        console.error('Error fetching user videos:', error);
-        res.status(500).json({ error: 'Failed to fetch user videos' });
-    }
-});
+// app.get('/admin/users/:username/videos', authMiddleware, adminOnly, async (req, res) => {
+//     try {
+//         const { username } = req.params;
+//         console.log(`Admin ${req.user.username} viewing videos for user ${username}`);
+//         const videos = await dbAll(`SELECT * FROM videos WHERE owner = ?`, [username]);
+//         res.json(videos);
+//     } catch (error) {
+//         console.error('Error fetching user videos:', error);
+//         res.status(500).json({ error: 'Failed to fetch user videos' });
+//     }
+// });
 
-app.delete('/admin/videos/:id', authMiddleware, adminOnly, async (req, res) => {
-    try {
-        const { id } = req.params;
-        console.log(`Admin ${req.user.username} deleting video ${id}`);
-
-        // Get video info first
-        const video = await dbGet(`SELECT * FROM videos WHERE id = ?`, [id]);
-        if (!video) return res.status(404).json({ error: 'Video not found' });
-
-        // Delete from database
-        await dbRun(`DELETE FROM videos WHERE id = ?`, [id]);
-
-        res.json({ message: 'Video deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting video:', error);
-        res.status(500).json({ error: 'Failed to delete video' });
-    }
-});
+// app.delete('/admin/videos/:id', authMiddleware, adminOnly, async (req, res) => {
+//     try {
+//         const { id } = req.params;
+//         console.log(`Admin ${req.user.username} deleting video ${id}`);
+//
+//         // Get video info first
+//         const video = await dbGet(`SELECT * FROM videos WHERE id = ?`, [id]);
+//         if (!video) return res.status(404).json({ error: 'Video not found' });
+//
+//         // Delete from database
+//         await dbRun(`DELETE FROM videos WHERE id = ?`, [id]);
+//
+//         res.json({ message: 'Video deleted successfully' });
+//     } catch (error) {
+//         console.error('Error deleting video:', error);
+//         res.status(500).json({ error: 'Failed to delete video' });
+//     }
+// });
 
 app.get('/admin/stats', authMiddleware, adminOnly, async (req, res) => {
     try {
