@@ -386,9 +386,9 @@ app.post('/login', async (req, res) => {
         });
 
         const response = await cognitoClient.send(command);
-
+        console.log("ChallengeName:", response.ChallengeName);
         // If MFA challenge required
-        if (response.ChallengeName === 'SOFTWARE_TOKEN_MFA') {
+        if (response.ChallengeName === 'EMAIL_OTP') {
             res.json({
                 mfaRequired: true,
                 session: response.Session,
@@ -423,12 +423,15 @@ app.post('/verify-mfa', async (req, res) => {
     const { username, session, code } = req.body;
 
     try {
+        const secretHash = calculateSecretHash(username, CONFIG.COGNITO_CLIENT_ID, CONFIG.COGNITO_CLIENT_SECRET);
+
         const command = new RespondToAuthChallengeCommand({
-            ChallengeName: 'SOFTWARE_TOKEN_MFA',
+            ChallengeName: 'EMAIL_OTP',
             ClientId: CONFIG.COGNITO_CLIENT_ID,
             ChallengeResponses: {
                 USERNAME: username,
-                SOFTWARE_TOKEN_MFA_CODE: code
+                EMAIL_OTP_CODE: code,
+                SECRET_HASH: secretHash
             },
             Session: session
         });
@@ -450,7 +453,8 @@ app.post('/verify-mfa', async (req, res) => {
             res.status(400).json({ error: 'Invalid verification code' });
         }
     } catch (error) {
-        res.status(400).json({ error: 'Verification failed' });
+        console.error("MFA verification error:", error);
+        res.status(400).json({ error: error.message || 'Verification failed' });
     }
 });
 
